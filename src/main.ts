@@ -1,16 +1,57 @@
 import * as core from '@actions/core'
-import {wait} from './wait'
+import {getOctokit, context} from '@actions/github'
+import {GitHub} from '@actions/github/lib/utils'
+
+function getOctokitClient(): InstanceType<typeof GitHub> {
+  const token = process.env.GITHUB_TOKEN
+
+  if (!token) {
+    throw new Error(`GITHUB_TOKEN not found in environment variables`)
+  }
+
+  return getOctokit(token)
+}
+
+async function getCheckRuns(octokit: InstanceType<typeof GitHub>) {
+  return octokit.checks.listForRef({
+    owner: context.repo.owner,
+    repo: context.repo.repo,
+    ref: context.sha
+  })
+}
 
 async function run(): Promise<void> {
   try {
-    const ms: string = core.getInput('milliseconds')
-    core.debug(`Waiting ${ms} milliseconds ...`) // debug is only output if you set the secret `ACTIONS_RUNNER_DEBUG` to true
+    const ignoreChecksString: string = core.getInput('ignore_checks')
+    const ignoreChecks: string[] = JSON.parse(ignoreChecksString)
+    core.debug(`Will ignore checks: ${ignoreChecksString}`)
 
-    core.debug(new Date().toTimeString())
-    await wait(parseInt(ms, 10))
-    core.debug(new Date().toTimeString())
+    const octokit = getOctokitClient()
+    const {data: data} = await getCheckRuns(octokit)
+    const checkRuns = data.check_runs
 
-    core.setOutput('time', new Date().toTimeString())
+    if (checkRuns.length === 0) {
+      core.info(
+        `No check runs found for ${context.repo.owner}/${context.repo.repo} and sha: ${context.sha}`
+      )
+      return
+    }
+
+    core.info(`Found ${checkRuns.length} runs`)
+
+    const nonSuccessfulRuns = checkRuns.filter(
+      checkRun =>
+        checkRun.status === 'completed' &&
+        // !['success', 'neutral'].includes(checkRun.conclusion) &&
+        !ignoreChecks.includes(checkRun.name)
+    )
+
+    if (nonSuccessfulRuns.length !== 0) {
+      for (const nonSuccessfulRun of nonSuccessfulRuns)
+        core.warning(
+          `${nonSuccessfulRun.name} failed to pass with conclusion ${nonSuccessfulRun.conclusion}`
+        )
+    }
   } catch (error) {
     core.setFailed(error.message)
   }
