@@ -69,12 +69,16 @@ function run() {
             }
             core.info(`Found ${checkRuns.length} runs`);
             const nonSuccessfulRuns = checkRuns.filter(checkRun => checkRun.status === 'completed' &&
-                // !['success', 'neutral'].includes(checkRun.conclusion) &&
+                !['success', 'neutral'].includes(checkRun.conclusion) &&
                 !ignoreChecks.includes(checkRun.name));
-            if (nonSuccessfulRuns.length !== 0) {
-                for (const nonSuccessfulRun of nonSuccessfulRuns)
-                    core.warning(`${nonSuccessfulRun.name} failed to pass with conclusion ${nonSuccessfulRun.conclusion}`);
+            if (nonSuccessfulRuns.length === 0) {
+                core.info('All checks passed');
+                return;
             }
+            for (const nonSuccessfulRun of nonSuccessfulRuns) {
+                core.warning(`${nonSuccessfulRun.name} failed to pass with conclusion ${nonSuccessfulRun.conclusion}`);
+            }
+            core.setFailed(`Some checks failed`);
         }
         catch (error) {
             core.setFailed(error.message);
