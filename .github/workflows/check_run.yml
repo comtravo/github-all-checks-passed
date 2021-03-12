@@ -1,8 +1,8 @@
 name: 'check_run'
 on:
   check_run:
-    types:
-      - completed
+    # types:
+    #   - completed
 
 jobs:
   check_suite_job:
