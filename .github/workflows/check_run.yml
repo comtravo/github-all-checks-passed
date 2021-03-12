@@ -1,6 +1,6 @@
 name: 'check_run'
 on:
-  check_suite:
+  check_run:
     types:
       - completed
 
