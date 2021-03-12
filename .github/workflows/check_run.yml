@@ -1,11 +1,11 @@
-name: 'check_suite'
-on: # rebuild any PRs and main branch changes
+name: 'check_run'
+on:
   check_suite:
     types:
       - completed
 
 jobs:
-  check_suite_job: # make sure the action works on a clean machine without building
+  check_suite_job:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
