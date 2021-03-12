@@ -123,12 +123,12 @@ async function run(): Promise<void> {
 
     const octokit = getOctokitClient()
     const checkRunsResponse = await getCheckRuns(octokit)
+    const checkIdOfThisCheckRun = fetchCheckIdForThisAction(checkRunsResponse)
+
     const nonSuccessfulRuns = findNonSuccessfulCheckRuns(
       checkRunsResponse,
       ignoreChecks
     )
-
-    const checkIdOfThisCheckRun = fetchCheckIdForThisAction(checkRunsResponse)
 
     if (!nonSuccessfulRuns || nonSuccessfulRuns.length === 0) {
       core.info('All checks passed')
