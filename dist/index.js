@@ -122,8 +122,8 @@ function run() {
             core.debug(`Will ignore checks: ${ignoreChecksString}`);
             const octokit = getOctokitClient();
             const checkRunsResponse = yield getCheckRuns(octokit);
-            const nonSuccessfulRuns = findNonSuccessfulCheckRuns(checkRunsResponse, ignoreChecks);
             const checkIdOfThisCheckRun = fetchCheckIdForThisAction(checkRunsResponse);
+            const nonSuccessfulRuns = findNonSuccessfulCheckRuns(checkRunsResponse, ignoreChecks);
             if (!nonSuccessfulRuns || nonSuccessfulRuns.length === 0) {
                 core.info('All checks passed');
                 yield setCheckRunResult(octokit, checkIdOfThisCheckRun, 'success');
