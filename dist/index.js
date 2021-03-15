@@ -38,7 +38,6 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 const core = __importStar(__nccwpck_require__(186));
 const github_1 = __nccwpck_require__(438);
-const allChecksPassedActionMessage = 'All checks passed';
 function getOctokitClient() {
     const token = process.env.GITHUB_TOKEN;
     if (!token) {
@@ -54,53 +53,6 @@ function getCheckRuns(octokit) {
             ref: github_1.context.sha
         });
     });
-}
-function setCheckRunResult(octokit, thisCheckRunsId, result) {
-    return __awaiter(this, void 0, void 0, function* () {
-        const summary = result === 'success'
-            ? 'All checks passed'
-            : 'Some checks failed. check which check failed apart from this one';
-        if (!thisCheckRunsId) {
-            core.info('Creating a new check');
-            return octokit.checks.create({
-                owner: github_1.context.repo.owner,
-                repo: github_1.context.repo.repo,
-                head_sha: github_1.context.sha,
-                name: allChecksPassedActionMessage,
-                status: 'completed',
-                conclusion: result,
-                output: {
-                    title: 'Detail',
-                    summary
-                }
-            });
-        }
-        else {
-            core.info(`Updating the existing check with check id: ${thisCheckRunsId}`);
-            return octokit.checks.update({
-                owner: github_1.context.repo.owner,
-                repo: github_1.context.repo.repo,
-                check_run_id: thisCheckRunsId,
-                status: 'completed',
-                conclusion: result,
-                output: {
-                    title: 'Detail',
-                    summary
-                }
-            });
-        }
-    });
-}
-function fetchCheckIdForThisAction(res) {
-    const checkRuns = res.data.check_runs;
-    const thisCheckRun = checkRuns.filter(checkRun => checkRun.name === allChecksPassedActionMessage);
-    if (thisCheckRun.length === 0) {
-        return;
-    }
-    if (thisCheckRun.length > 1) {
-        throw new Error(`More than 1 check run for this action: ${JSON.stringify(thisCheckRun)}`);
-    }
-    return thisCheckRun[0].id;
 }
 function findNonSuccessfulCheckRuns(res, ignoreChecks) {
     const checkRuns = res.data.check_runs;
@@ -133,20 +85,18 @@ function run() {
             const checkRunsResponse = yield getCheckRuns(octokit);
             const someChecksArePending = areTherePendingCheckRuns(nameOfThisCheck, checkRunsResponse);
             if (someChecksArePending) {
-                core.info('Some checks are still pending');
+                core.warning('Some checks are still pending');
                 return;
             }
-            const checkIdOfThisCheckRun = fetchCheckIdForThisAction(checkRunsResponse);
             const nonSuccessfulRuns = findNonSuccessfulCheckRuns(checkRunsResponse, ignoreChecks);
             if (!nonSuccessfulRuns || nonSuccessfulRuns.length === 0) {
                 core.info('All checks passed');
-                yield setCheckRunResult(octokit, checkIdOfThisCheckRun, 'success');
                 return;
             }
             for (const nonSuccessfulRun of nonSuccessfulRuns) {
                 core.warning(`${nonSuccessfulRun.name} failed to pass with conclusion ${nonSuccessfulRun.conclusion}`);
             }
-            yield setCheckRunResult(octokit, checkIdOfThisCheckRun, 'failure');
+            core.setFailed(`Some checks failed`);
             return;
         }
         catch (error) {
