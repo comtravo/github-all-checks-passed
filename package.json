@@ -29,9 +29,11 @@
     "@actions/github": "^4.0.0",
     "@octokit/core": "^3.3.0",
     "@octokit/rest": "^18.3.5",
-    "@octokit/webhooks": "^8.5.3"
+    "@octokit/webhooks": "^8.5.3",
+    "crypto": "^1.0.1"
   },
   "devDependencies": {
+    "@types/aws-lambda": "^8.10.72",
     "@types/jest": "^26.0.20",
     "@types/node": "^14.14.9",
     "@typescript-eslint/parser": "^4.8.1",
