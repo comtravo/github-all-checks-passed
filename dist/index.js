@@ -114,6 +114,13 @@ function findNonSuccessfulCheckRuns(res, ignoreChecks) {
         !ignoreChecks.includes(checkRun.name));
     return nonSuccessfulRuns;
 }
+function areTherePendingCheckRuns(res) {
+    const pendingRuns = res.data.check_runs.find(checkRun => checkRun.status !== 'completed');
+    if (pendingRuns) {
+        return true;
+    }
+    return false;
+}
 function run() {
     return __awaiter(this, void 0, void 0, function* () {
         try {
@@ -122,6 +129,11 @@ function run() {
             core.debug(`Will ignore checks: ${ignoreChecksString}`);
             const octokit = getOctokitClient();
             const checkRunsResponse = yield getCheckRuns(octokit);
+            const someChecksArePending = areTherePendingCheckRuns(checkRunsResponse);
+            if (someChecksArePending) {
+                core.info('Some checks are still pending');
+                return;
+            }
             const checkIdOfThisCheckRun = fetchCheckIdForThisAction(checkRunsResponse);
             const nonSuccessfulRuns = findNonSuccessfulCheckRuns(checkRunsResponse, ignoreChecks);
             if (!nonSuccessfulRuns || nonSuccessfulRuns.length === 0) {
@@ -2173,7 +2185,7 @@ exports.withCustomRequest = withCustomRequest;
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 
-const VERSION = "2.13.0";
+const VERSION = "2.13.2";
 
 /**
  * Some “list” response that can be paginated have a different response structure

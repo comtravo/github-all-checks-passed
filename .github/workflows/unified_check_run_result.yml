@@ -1,8 +1,10 @@
-name: success-check
-on: status
+name: unified_check_run
+on:
+  check_run:
+    types: [completed]
 jobs:
   checkForSuccess:
-    name: success-check
+    name: check_if_all_checks_pass
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
