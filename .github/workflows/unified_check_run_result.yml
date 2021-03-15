@@ -9,5 +9,8 @@ jobs:
     steps:
       - uses: actions/checkout@v2
       - uses: ./
+        with:
+          name: check_if_all_checks_pass
+          ignore_checks: '["SonarCloud Code Analysis", "triage"]'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
