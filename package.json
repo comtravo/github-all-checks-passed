@@ -26,16 +26,14 @@
   "license": "MIT",
   "dependencies": {
     "@actions/core": "^1.2.6",
-    "@actions/github": "^4.0.0",
-    "@octokit/core": "^3.3.0",
-    "@octokit/rest": "^18.3.5",
-    "@octokit/webhooks": "^8.5.3"
+    "@actions/github": "^4.0.0"
   },
   "devDependencies": {
     "@types/jest": "^26.0.20",
     "@types/node": "^14.14.34",
     "@typescript-eslint/parser": "^4.17.0",
     "@vercel/ncc": "^0.27.0",
+    "@octokit/types": "^6.12.2",
     "eslint": "^7.22.0",
     "eslint-plugin-github": "^4.1.2",
     "eslint-plugin-jest": "^24.2.1",
