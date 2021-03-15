@@ -115,9 +115,13 @@ function findNonSuccessfulCheckRuns(
   return nonSuccessfulRuns
 }
 
-function areTherePendingCheckRuns(res: checksListForRefResponseType): boolean {
+function areTherePendingCheckRuns(
+  nameOfThisCheck: string,
+  res: checksListForRefResponseType
+): boolean {
   const pendingRuns = res.data.check_runs.find(
-    checkRun => checkRun.status !== 'completed'
+    checkRun =>
+      checkRun.name !== nameOfThisCheck && checkRun.status !== 'completed'
   )
 
   if (pendingRuns) {
@@ -130,6 +134,7 @@ function areTherePendingCheckRuns(res: checksListForRefResponseType): boolean {
 
 async function run(): Promise<void> {
   try {
+    const nameOfThisCheck: string = core.getInput('name', {required: true})
     const ignoreChecksString: string = core.getInput('ignore_checks')
     const ignoreChecks: string[] = JSON.parse(ignoreChecksString)
     core.debug(`Will ignore checks: ${ignoreChecksString}`)
@@ -137,7 +142,10 @@ async function run(): Promise<void> {
     const octokit = getOctokitClient()
     const checkRunsResponse = await getCheckRuns(octokit)
 
-    const someChecksArePending = areTherePendingCheckRuns(checkRunsResponse)
+    const someChecksArePending = areTherePendingCheckRuns(
+      nameOfThisCheck,
+      checkRunsResponse
+    )
 
     if (someChecksArePending) {
       core.info('Some checks are still pending')
