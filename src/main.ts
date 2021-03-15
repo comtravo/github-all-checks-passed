@@ -121,6 +121,7 @@ function areTherePendingCheckRuns(res: checksListForRefResponseType): boolean {
   )
 
   if (pendingRuns) {
+    core.info(`Found pending run: ${pendingRuns.name}`)
     return true
   }
 
