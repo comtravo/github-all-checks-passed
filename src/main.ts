@@ -153,7 +153,7 @@
 // run()
 
 import {APIGatewayProxyEventV2, APIGatewayProxyResultV2} from 'aws-lambda'
-import {CheckSuiteEvent} from '@octokit/webhooks-definitions/schema'
+import {CheckRunEvent} from '@octokit/webhooks-definitions/schema'
 import * as crypto from 'crypto'
 
 function validateGithubWebhookPayload(event: APIGatewayProxyEventV2): void {
@@ -201,7 +201,7 @@ export async function handler(
   try {
     validateGithubWebhookPayload(event)
 
-    const checkSuiteEvent = JSON.parse(event.body as string) as CheckSuiteEvent
+    const checkRunEvent = JSON.parse(event.body as string) as CheckRunEvent
 
     if (
       !checkSuiteEvent.action ||
@@ -210,10 +210,7 @@ export async function handler(
       checkSuiteEvent.check_suite.status === null ||
       !['completed'].includes(checkSuiteEvent.check_suite.status)
     ) {
-      return apiGatewayResponse(
-        201,
-        'Not handling event as checkSuite.action is not completed'
-      )
+      return apiGatewayResponse(201, 'Not handling event as evvent is invalid')
     }
 
     return apiGatewayResponse(201, 'event handled successfully')
