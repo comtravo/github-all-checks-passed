@@ -117,6 +117,7 @@ function findNonSuccessfulCheckRuns(res, ignoreChecks) {
 function areTherePendingCheckRuns(res) {
     const pendingRuns = res.data.check_runs.find(checkRun => checkRun.status !== 'completed');
     if (pendingRuns) {
+        core.info(`Found pending run: ${pendingRuns.name}`);
         return true;
     }
     return false;
