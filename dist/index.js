@@ -114,8 +114,8 @@ function findNonSuccessfulCheckRuns(res, ignoreChecks) {
         !ignoreChecks.includes(checkRun.name));
     return nonSuccessfulRuns;
 }
-function areTherePendingCheckRuns(res) {
-    const pendingRuns = res.data.check_runs.find(checkRun => checkRun.status !== 'completed');
+function areTherePendingCheckRuns(nameOfThisCheck, res) {
+    const pendingRuns = res.data.check_runs.find(checkRun => checkRun.name !== nameOfThisCheck && checkRun.status !== 'completed');
     if (pendingRuns) {
         core.info(`Found pending run: ${pendingRuns.name}`);
         return true;
@@ -125,12 +125,13 @@ function areTherePendingCheckRuns(res) {
 function run() {
     return __awaiter(this, void 0, void 0, function* () {
         try {
+            const nameOfThisCheck = core.getInput('name', { required: true });
             const ignoreChecksString = core.getInput('ignore_checks');
             const ignoreChecks = JSON.parse(ignoreChecksString);
             core.debug(`Will ignore checks: ${ignoreChecksString}`);
             const octokit = getOctokitClient();
             const checkRunsResponse = yield getCheckRuns(octokit);
-            const someChecksArePending = areTherePendingCheckRuns(checkRunsResponse);
+            const someChecksArePending = areTherePendingCheckRuns(nameOfThisCheck, checkRunsResponse);
             if (someChecksArePending) {
                 core.info('Some checks are still pending');
                 return;

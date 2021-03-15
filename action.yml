@@ -6,6 +6,9 @@ inputs:
     required: false
     description: 'stringified JSON array of checks to ignore'
     default: '[]'
+  name:
+    required: true
+    description: 'Name of this run'
 runs:
   using: 'node12'
   main: 'dist/index.js'
