@@ -30,12 +30,15 @@
     "@octokit/core": "^3.3.0",
     "@octokit/rest": "^18.3.5",
     "@octokit/webhooks": "^8.5.3",
-    "crypto": "^1.0.1"
+    "crypto": "^1.0.1",
+    "pino": "^6.11.2"
   },
   "devDependencies": {
+    "@octokit/types": "^6.12.2",
     "@types/aws-lambda": "^8.10.72",
     "@types/jest": "^26.0.20",
     "@types/node": "^14.14.9",
+    "@types/pino": "^6.3.6",
     "@typescript-eslint/parser": "^4.8.1",
     "@vercel/ncc": "^0.25.1",
     "eslint": "^7.17.0",

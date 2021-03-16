@@ -1,166 +1,20 @@
-// import * as core from '@actions/core'
-// import {getOctokit, context} from '@actions/github'
-// import {Endpoints} from '@octokit/types'
-// import {GitHub} from '@actions/github/lib/utils'
-
-// type checksListForRefResponseType = Endpoints['GET /repos/{owner}/{repo}/commits/{ref}/check-runs']['response']
-// type checkRunsType = Endpoints['GET /repos/{owner}/{repo}/commits/{ref}/check-runs']['response']['data']['check_runs']
-// type createCheckResponseType = Endpoints['POST /repos/{owner}/{repo}/check-runs']['response']
-// type updateCheckResponseType = Endpoints['PATCH /repos/{owner}/{repo}/check-runs/{check_run_id}']['response']
-
-// const allChecksPassedActionMessage = 'All checks passed'
-
-// function getOctokitClient(): InstanceType<typeof GitHub> {
-//   const token = process.env.GITHUB_TOKEN
-
-//   if (!token) {
-//     throw new Error(`GITHUB_TOKEN not found in environment variables`)
-//   }
-
-//   return getOctokit(token)
-// }
-
-// async function getCheckRuns(
-//   octokit: InstanceType<typeof GitHub>
-// ): Promise<checksListForRefResponseType> {
-//   return octokit.checks.listForRef({
-//     owner: context.repo.owner,
-//     repo: context.repo.repo,
-//     ref: context.sha
-//   })
-// }
-
-// async function setCheckRunResult(
-//   octokit: InstanceType<typeof GitHub>,
-//   thisCheckRunsId: number | undefined,
-//   result: 'success' | 'failure'
-// ): Promise<createCheckResponseType | updateCheckResponseType> {
-//   const summary =
-//     result === 'success'
-//       ? 'All checks passed'
-//       : 'Some checks failed. check which check failed apart from this one'
-//   if (!thisCheckRunsId) {
-//     core.info('Creating a new check')
-//     return octokit.checks.create({
-//       owner: context.repo.owner,
-//       repo: context.repo.repo,
-//       head_sha: context.sha,
-//       name: allChecksPassedActionMessage,
-//       status: 'completed',
-//       conclusion: result,
-//       output: {
-//         title: 'Detail',
-//         summary
-//       }
-//     })
-//   } else {
-//     core.info(`Updating the existing check with check id: ${thisCheckRunsId}`)
-//     return octokit.checks.update({
-//       owner: context.repo.owner,
-//       repo: context.repo.repo,
-//       check_run_id: thisCheckRunsId,
-//       status: 'completed',
-//       conclusion: result,
-//       output: {
-//         title: 'Detail',
-//         summary
-//       }
-//     })
-//   }
-// }
-
-// function fetchCheckIdForThisAction(
-//   res: checksListForRefResponseType
-// ): number | undefined {
-//   const checkRuns = res.data.check_runs
-
-//   const thisCheckRun = checkRuns.filter(
-//     checkRun => checkRun.name === allChecksPassedActionMessage
-//   )
-
-//   if (thisCheckRun.length === 0) {
-//     return
-//   }
-
-//   if (thisCheckRun.length > 1) {
-//     throw new Error(
-//       `More than 1 check run for this action: ${JSON.stringify(thisCheckRun)}`
-//     )
-//   }
-
-//   return thisCheckRun[0].id
-// }
-
-// function findNonSuccessfulCheckRuns(
-//   res: checksListForRefResponseType,
-//   ignoreChecks: string[]
-// ): checkRunsType | undefined {
-//   const checkRuns = res.data.check_runs
-//   if (checkRuns.length === 0) {
-//     core.info(
-//       `No check runs found for ${context.repo.owner}/${context.repo.repo} and sha: ${context.sha}`
-//     )
-//     return
-//   }
-
-//   core.info(`Found ${checkRuns.length} runs`)
-
-//   const nonSuccessfulRuns = checkRuns.filter(
-//     checkRun =>
-//       checkRun.status === 'completed' &&
-//       !['success', 'neutral'].includes(checkRun.conclusion) &&
-//       !ignoreChecks.includes(checkRun.name)
-//   )
-
-//   return nonSuccessfulRuns
-// }
-
-// async function run(): Promise<void> {
-//   try {
-//     const ignoreChecksString: string = core.getInput('ignore_checks')
-//     const ignoreChecks: string[] = JSON.parse(ignoreChecksString)
-//     core.debug(`Will ignore checks: ${ignoreChecksString}`)
-
-//     const octokit = getOctokitClient()
-//     const checkRunsResponse = await getCheckRuns(octokit)
-//     const checkIdOfThisCheckRun = fetchCheckIdForThisAction(checkRunsResponse)
-
-//     const nonSuccessfulRuns = findNonSuccessfulCheckRuns(
-//       checkRunsResponse,
-//       ignoreChecks
-//     )
-
-//     if (!nonSuccessfulRuns || nonSuccessfulRuns.length === 0) {
-//       core.info('All checks passed')
-
-//       await setCheckRunResult(octokit, checkIdOfThisCheckRun, 'success')
-//       return
-//     }
-
-//     for (const nonSuccessfulRun of nonSuccessfulRuns) {
-//       core.warning(
-//         `${nonSuccessfulRun.name} failed to pass with conclusion ${nonSuccessfulRun.conclusion}`
-//       )
-//     }
-
-//     await setCheckRunResult(octokit, checkIdOfThisCheckRun, 'failure')
-//     return
-//   } catch (error) {
-//     core.setFailed(error.message)
-//   }
-// }
-
-// run()
-
 import {APIGatewayProxyEventV2, APIGatewayProxyResultV2} from 'aws-lambda'
-import {CheckRunEvent} from '@octokit/webhooks-definitions/schema'
+import {CheckSuiteEvent} from '@octokit/webhooks-definitions/schema'
 import * as crypto from 'crypto'
+import {Octokit} from '@octokit/rest'
+import {Endpoints} from '@octokit/types'
+import pino from 'pino'
+
+const log = pino()
+
+type ListChecksForRefCheckRuns = Endpoints['GET /repos/{owner}/{repo}/commits/{ref}/check-runs']['response']['data']['check_runs']
+type CreateCommitStatusResponse = Endpoints['POST /repos/{owner}/{repo}/statuses/{sha}']['response']
 
 function validateGithubWebhookPayload(event: APIGatewayProxyEventV2): void {
   const secret = process.env.GITHUB_WEBHOOK_SECRET
-  const sig = event['headers']['X-Hub-Signature']
-  const githubEvent = event['headers']['X-GitHub-Event']
-  const id = event['headers']['X-GitHub-Delivery']
+  const sig = event.headers['X-Hub-Signature']
+  const githubEvent = event.headers['X-GitHub-Event']
+  const id = event.headers['X-GitHub-Delivery']
 
   if (!secret || !sig || !githubEvent || !id) {
     throw new Error(`Invalid payload: ${JSON.stringify(event)}`)
@@ -186,6 +40,12 @@ function apiGatewayResponse(
   statusCode: number,
   body: string
 ): APIGatewayProxyResultV2 {
+  const logMessage = `status code: ${statusCode}, body: ${body}`
+  if (statusCode > 399) {
+    log.error(logMessage)
+  } else {
+    log.info(logMessage)
+  }
   return {
     statusCode,
     body,
@@ -195,26 +55,132 @@ function apiGatewayResponse(
   }
 }
 
+function processEvent(event: CheckSuiteEvent): boolean {
+  return (
+    event.action === 'completed' &&
+    event.check_suite.conclusion !== null &&
+    ['success', 'neutral'].includes(event.check_suite.conclusion)
+  )
+}
+
+function getOctokit(): InstanceType<typeof Octokit> {
+  const token = process.env.GITHUB_TOKEN
+
+  if (!token) {
+    throw new Error('GITHUB_TOKEN cannot be found in environment variables')
+  }
+
+  return new Octokit({auth: token})
+}
+
+function getOwnerRepoSha(
+  event: CheckSuiteEvent
+): {
+  owner: string
+  repo: string
+  sha: string
+} {
+  if (!event.repository.owner.name) {
+    throw new Error(
+      `Unable to determine owner for repor: ${JSON.stringify(event.repository)}`
+    )
+  }
+  return {
+    owner: event.repository.owner.name,
+    repo: event.repository.name,
+    sha: event.check_suite.head_sha
+  }
+}
+
+function findPendingChecks(
+  allChecks: ListChecksForRefCheckRuns,
+  ignoreChecks: string[]
+): ListChecksForRefCheckRuns {
+  return allChecks.filter(
+    check => !ignoreChecks.includes(check.name) && check.status !== 'completed'
+  )
+}
+
+function findFailedChecks(
+  allChecks: ListChecksForRefCheckRuns,
+  ignoreChecks: string[]
+): ListChecksForRefCheckRuns {
+  return allChecks.filter(
+    check =>
+      !ignoreChecks.includes(check.name) &&
+      check.status === 'completed' &&
+      check.conclusion !== 'success'
+  )
+}
+
+async function setCommitStatusForSha(
+  owner: string,
+  repo: string,
+  sha: string,
+  state: 'success' | 'failure' | 'error' | 'pending',
+  octokit: InstanceType<typeof Octokit>
+): Promise<CreateCommitStatusResponse> {
+  const statusName = 'all-checks-passed'
+
+  return octokit.repos.createCommitStatus({
+    owner,
+    repo,
+    sha,
+    state,
+    context: statusName
+  })
+}
+
 export async function handler(
   event: APIGatewayProxyEventV2
 ): Promise<APIGatewayProxyResultV2> {
   try {
     validateGithubWebhookPayload(event)
+    const checkSuiteEvent = JSON.parse(event.body as string) as CheckSuiteEvent
 
-    const checkRunEvent = JSON.parse(event.body as string) as CheckRunEvent
-
-    if (
-      !checkSuiteEvent.action ||
-      checkSuiteEvent.action !== 'completed' ||
-      !checkSuiteEvent.check_suite ||
-      checkSuiteEvent.check_suite.status === null ||
-      !['completed'].includes(checkSuiteEvent.check_suite.status)
-    ) {
-      return apiGatewayResponse(201, 'Not handling event as evvent is invalid')
+    if (!processEvent(checkSuiteEvent)) {
+      return apiGatewayResponse(
+        201,
+        `Ignoring event: ${JSON.stringify(checkSuiteEvent)}`
+      )
     }
 
-    return apiGatewayResponse(201, 'event handled successfully')
+    const {owner, repo, sha} = getOwnerRepoSha(checkSuiteEvent)
+    const octokit = getOctokit()
+    const ignoreChecksCSV = process.env.IGNORE_CHECKS || ''
+
+    const ignoreChecks = ignoreChecksCSV.split(',')
+
+    const allChecksResponse = await octokit.checks.listForRef({
+      owner,
+      repo,
+      ref: sha
+    })
+
+    const pendingChecks = findPendingChecks(
+      allChecksResponse.data.check_runs,
+      ignoreChecks
+    )
+
+    if (pendingChecks.length !== 0) {
+      await setCommitStatusForSha(owner, repo, sha, 'pending', octokit)
+      return apiGatewayResponse(201, 'Waiting for other checks to complete')
+    }
+
+    const failedChecks = findFailedChecks(
+      allChecksResponse.data.check_runs,
+      ignoreChecks
+    )
+
+    if (failedChecks.length !== 0) {
+      await setCommitStatusForSha(owner, repo, sha, 'failure', octokit)
+      return apiGatewayResponse(201, 'Some or all checks failed')
+    }
+
+    await setCommitStatusForSha(owner, repo, sha, 'success', octokit)
+    return apiGatewayResponse(201, 'Event handled successfully')
   } catch (err) {
+    log.error((err as Error).message)
     return apiGatewayResponse(401, (err as Error).message)
   }
 }

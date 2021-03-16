@@ -2,7 +2,7 @@ require('./sourcemap-register.js');module.exports =
 /******/ (() => { // webpackBootstrap
 /******/ 	var __webpack_modules__ = ({
 
-/***/ 109:
+/***/ 3109:
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -35,1324 +35,129 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-const core = __importStar(__webpack_require__(186));
-const github_1 = __webpack_require__(438);
-const allChecksPassedActionMessage = 'All checks passed';
-function getOctokitClient() {
+exports.handler = void 0;
+const crypto = __importStar(__webpack_require__(6417));
+const rest_1 = __webpack_require__(5375);
+const pino_1 = __importDefault(__webpack_require__(9608));
+const log = pino_1.default();
+function validateGithubWebhookPayload(event) {
+    const secret = process.env.GITHUB_WEBHOOK_SECRET;
+    const sig = event.headers['X-Hub-Signature'];
+    const githubEvent = event.headers['X-GitHub-Event'];
+    const id = event.headers['X-GitHub-Delivery'];
+    if (!secret || !sig || !githubEvent || !id) {
+        throw new Error(`Invalid payload: ${JSON.stringify(event)}`);
+    }
+    if (!event.body || event.body === '') {
+        throw new Error(`Cannot find event body: ${JSON.stringify(event)}`);
+    }
+    const calculatedSignature = crypto
+        .createHmac('sha1', secret)
+        .update(event.body, 'utf-8')
+        .digest('hex');
+    if (sig !== `sha1=${calculatedSignature}`) {
+        throw new Error(`Signatures did not match. Webhook signature: ${sig} and calculated: ${calculatedSignature}`);
+    }
+}
+function apiGatewayResponse(statusCode, body) {
+    const logMessage = `status code: ${statusCode}, body: ${body}`;
+    if (statusCode > 399) {
+        log.error(logMessage);
+    }
+    else {
+        log.info(logMessage);
+    }
+    return {
+        statusCode,
+        body,
+        headers: {
+            'Content-Type': 'text/plain'
+        }
+    };
+}
+function processEvent(event) {
+    return (event.action === 'completed' &&
+        event.check_suite.conclusion !== null &&
+        ['success', 'neutral'].includes(event.check_suite.conclusion));
+}
+function getOctokit() {
     const token = process.env.GITHUB_TOKEN;
     if (!token) {
-        throw new Error(`GITHUB_TOKEN not found in environment variables`);
+        throw new Error('GITHUB_TOKEN cannot be found in environment variables');
     }
-    return github_1.getOctokit(token);
+    return new rest_1.Octokit({ auth: token });
 }
-function getCheckRuns(octokit) {
+function getOwnerRepoSha(event) {
+    if (!event.repository.owner.name) {
+        throw new Error(`Unable to determine owner for repor: ${JSON.stringify(event.repository)}`);
+    }
+    return {
+        owner: event.repository.owner.name,
+        repo: event.repository.name,
+        sha: event.check_suite.head_sha
+    };
+}
+function findPendingChecks(allChecks, ignoreChecks) {
+    return allChecks.filter(check => !ignoreChecks.includes(check.name) && check.status !== 'completed');
+}
+function findFailedChecks(allChecks, ignoreChecks) {
+    return allChecks.filter(check => !ignoreChecks.includes(check.name) &&
+        check.status === 'completed' &&
+        check.conclusion !== 'success');
+}
+function setCommitStatusForSha(owner, repo, sha, state, octokit) {
     return __awaiter(this, void 0, void 0, function* () {
-        return octokit.checks.listForRef({
-            owner: github_1.context.repo.owner,
-            repo: github_1.context.repo.repo,
-            ref: github_1.context.sha
+        const statusName = 'all-checks-passed';
+        return octokit.repos.createCommitStatus({
+            owner,
+            repo,
+            sha,
+            state,
+            context: statusName
         });
     });
 }
-function setCheckRunResult(octokit, thisCheckRunsId, result) {
-    return __awaiter(this, void 0, void 0, function* () {
-        const summary = result === 'success'
-            ? 'All checks passed'
-            : 'Some checks failed. check which check failed apart from this one';
-        if (!thisCheckRunsId) {
-            core.info('Creating a new check');
-            return octokit.checks.create({
-                owner: github_1.context.repo.owner,
-                repo: github_1.context.repo.repo,
-                head_sha: github_1.context.sha,
-                name: allChecksPassedActionMessage,
-                status: 'completed',
-                conclusion: result,
-                output: {
-                    title: 'Detail',
-                    summary
-                }
-            });
-        }
-        else {
-            core.info(`Updating the existing check with check id: ${thisCheckRunsId}`);
-            return octokit.checks.update({
-                owner: github_1.context.repo.owner,
-                repo: github_1.context.repo.repo,
-                check_run_id: thisCheckRunsId,
-                status: 'completed',
-                conclusion: result,
-                output: {
-                    title: 'Detail',
-                    summary
-                }
-            });
-        }
-    });
-}
-function fetchCheckIdForThisAction(res) {
-    const checkRuns = res.data.check_runs;
-    const thisCheckRun = checkRuns.filter(checkRun => checkRun.name === allChecksPassedActionMessage);
-    if (thisCheckRun.length === 0) {
-        return;
-    }
-    if (thisCheckRun.length > 1) {
-        throw new Error(`More than 1 check run for this action: ${JSON.stringify(thisCheckRun)}`);
-    }
-    return thisCheckRun[0].id;
-}
-function findNonSuccessfulCheckRuns(res, ignoreChecks) {
-    const checkRuns = res.data.check_runs;
-    if (checkRuns.length === 0) {
-        core.info(`No check runs found for ${github_1.context.repo.owner}/${github_1.context.repo.repo} and sha: ${github_1.context.sha}`);
-        return;
-    }
-    core.info(`Found ${checkRuns.length} runs`);
-    const nonSuccessfulRuns = checkRuns.filter(checkRun => checkRun.status === 'completed' &&
-        !['success', 'neutral'].includes(checkRun.conclusion) &&
-        !ignoreChecks.includes(checkRun.name));
-    return nonSuccessfulRuns;
-}
-function run() {
+function handler(event) {
     return __awaiter(this, void 0, void 0, function* () {
         try {
-            const ignoreChecksString = core.getInput('ignore_checks');
-            const ignoreChecks = JSON.parse(ignoreChecksString);
-            core.debug(`Will ignore checks: ${ignoreChecksString}`);
-            const octokit = getOctokitClient();
-            const checkRunsResponse = yield getCheckRuns(octokit);
-            const checkIdOfThisCheckRun = fetchCheckIdForThisAction(checkRunsResponse);
-            const nonSuccessfulRuns = findNonSuccessfulCheckRuns(checkRunsResponse, ignoreChecks);
-            if (!nonSuccessfulRuns || nonSuccessfulRuns.length === 0) {
-                core.info('All checks passed');
-                yield setCheckRunResult(octokit, checkIdOfThisCheckRun, 'success');
-                return;
+            validateGithubWebhookPayload(event);
+            const checkSuiteEvent = JSON.parse(event.body);
+            if (!processEvent(checkSuiteEvent)) {
+                return apiGatewayResponse(201, `Ignoring event: ${JSON.stringify(checkSuiteEvent)}`);
             }
-            for (const nonSuccessfulRun of nonSuccessfulRuns) {
-                core.warning(`${nonSuccessfulRun.name} failed to pass with conclusion ${nonSuccessfulRun.conclusion}`);
+            const { owner, repo, sha } = getOwnerRepoSha(checkSuiteEvent);
+            const octokit = getOctokit();
+            const ignoreChecksCSV = process.env.IGNORE_CHECKS || '';
+            const ignoreChecks = ignoreChecksCSV.split(',');
+            const allChecksResponse = yield octokit.checks.listForRef({
+                owner,
+                repo,
+                ref: sha
+            });
+            const pendingChecks = findPendingChecks(allChecksResponse.data.check_runs, ignoreChecks);
+            if (pendingChecks.length !== 0) {
+                yield setCommitStatusForSha(owner, repo, sha, 'pending', octokit);
+                return apiGatewayResponse(201, 'Waiting for other checks to complete');
             }
-            yield setCheckRunResult(octokit, checkIdOfThisCheckRun, 'failure');
-            return;
+            const failedChecks = findFailedChecks(allChecksResponse.data.check_runs, ignoreChecks);
+            if (failedChecks.length !== 0) {
+                yield setCommitStatusForSha(owner, repo, sha, 'failure', octokit);
+                return apiGatewayResponse(201, 'Some or all checks failed');
+            }
+            yield setCommitStatusForSha(owner, repo, sha, 'success', octokit);
+            return apiGatewayResponse(201, 'Event handled successfully');
         }
-        catch (error) {
-            core.setFailed(error.message);
+        catch (err) {
+            log.error(err.message);
+            return apiGatewayResponse(401, err.message);
         }
     });
 }
-run();
-
-
-/***/ }),
-
-/***/ 351:
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
-
-"use strict";
-
-var __importStar = (this && this.__importStar) || function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null) for (var k in mod) if (Object.hasOwnProperty.call(mod, k)) result[k] = mod[k];
-    result["default"] = mod;
-    return result;
-};
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-const os = __importStar(__webpack_require__(87));
-const utils_1 = __webpack_require__(278);
-/**
- * Commands
- *
- * Command Format:
- *   ::name key=value,key=value::message
- *
- * Examples:
- *   ::warning::This is the message
- *   ::set-env name=MY_VAR::some value
- */
-function issueCommand(command, properties, message) {
-    const cmd = new Command(command, properties, message);
-    process.stdout.write(cmd.toString() + os.EOL);
-}
-exports.issueCommand = issueCommand;
-function issue(name, message = '') {
-    issueCommand(name, {}, message);
-}
-exports.issue = issue;
-const CMD_STRING = '::';
-class Command {
-    constructor(command, properties, message) {
-        if (!command) {
-            command = 'missing.command';
-        }
-        this.command = command;
-        this.properties = properties;
-        this.message = message;
-    }
-    toString() {
-        let cmdStr = CMD_STRING + this.command;
-        if (this.properties && Object.keys(this.properties).length > 0) {
-            cmdStr += ' ';
-            let first = true;
-            for (const key in this.properties) {
-                if (this.properties.hasOwnProperty(key)) {
-                    const val = this.properties[key];
-                    if (val) {
-                        if (first) {
-                            first = false;
-                        }
-                        else {
-                            cmdStr += ',';
-                        }
-                        cmdStr += `${key}=${escapeProperty(val)}`;
-                    }
-                }
-            }
-        }
-        cmdStr += `${CMD_STRING}${escapeData(this.message)}`;
-        return cmdStr;
-    }
-}
-function escapeData(s) {
-    return utils_1.toCommandValue(s)
-        .replace(/%/g, '%25')
-        .replace(/\r/g, '%0D')
-        .replace(/\n/g, '%0A');
-}
-function escapeProperty(s) {
-    return utils_1.toCommandValue(s)
-        .replace(/%/g, '%25')
-        .replace(/\r/g, '%0D')
-        .replace(/\n/g, '%0A')
-        .replace(/:/g, '%3A')
-        .replace(/,/g, '%2C');
-}
-//# sourceMappingURL=command.js.map
-
-/***/ }),
-
-/***/ 186:
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
-
-"use strict";
-
-var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
-    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
-    return new (P || (P = Promise))(function (resolve, reject) {
-        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
-        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
-        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
-        step((generator = generator.apply(thisArg, _arguments || [])).next());
-    });
-};
-var __importStar = (this && this.__importStar) || function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null) for (var k in mod) if (Object.hasOwnProperty.call(mod, k)) result[k] = mod[k];
-    result["default"] = mod;
-    return result;
-};
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-const command_1 = __webpack_require__(351);
-const file_command_1 = __webpack_require__(717);
-const utils_1 = __webpack_require__(278);
-const os = __importStar(__webpack_require__(87));
-const path = __importStar(__webpack_require__(622));
-/**
- * The code to exit an action
- */
-var ExitCode;
-(function (ExitCode) {
-    /**
-     * A code indicating that the action was successful
-     */
-    ExitCode[ExitCode["Success"] = 0] = "Success";
-    /**
-     * A code indicating that the action was a failure
-     */
-    ExitCode[ExitCode["Failure"] = 1] = "Failure";
-})(ExitCode = exports.ExitCode || (exports.ExitCode = {}));
-//-----------------------------------------------------------------------
-// Variables
-//-----------------------------------------------------------------------
-/**
- * Sets env variable for this action and future actions in the job
- * @param name the name of the variable to set
- * @param val the value of the variable. Non-string values will be converted to a string via JSON.stringify
- */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function exportVariable(name, val) {
-    const convertedVal = utils_1.toCommandValue(val);
-    process.env[name] = convertedVal;
-    const filePath = process.env['GITHUB_ENV'] || '';
-    if (filePath) {
-        const delimiter = '_GitHubActionsFileCommandDelimeter_';
-        const commandValue = `${name}<<${delimiter}${os.EOL}${convertedVal}${os.EOL}${delimiter}`;
-        file_command_1.issueCommand('ENV', commandValue);
-    }
-    else {
-        command_1.issueCommand('set-env', { name }, convertedVal);
-    }
-}
-exports.exportVariable = exportVariable;
-/**
- * Registers a secret which will get masked from logs
- * @param secret value of the secret
- */
-function setSecret(secret) {
-    command_1.issueCommand('add-mask', {}, secret);
-}
-exports.setSecret = setSecret;
-/**
- * Prepends inputPath to the PATH (for this action and future actions)
- * @param inputPath
- */
-function addPath(inputPath) {
-    const filePath = process.env['GITHUB_PATH'] || '';
-    if (filePath) {
-        file_command_1.issueCommand('PATH', inputPath);
-    }
-    else {
-        command_1.issueCommand('add-path', {}, inputPath);
-    }
-    process.env['PATH'] = `${inputPath}${path.delimiter}${process.env['PATH']}`;
-}
-exports.addPath = addPath;
-/**
- * Gets the value of an input.  The value is also trimmed.
- *
- * @param     name     name of the input to get
- * @param     options  optional. See InputOptions.
- * @returns   string
- */
-function getInput(name, options) {
-    const val = process.env[`INPUT_${name.replace(/ /g, '_').toUpperCase()}`] || '';
-    if (options && options.required && !val) {
-        throw new Error(`Input required and not supplied: ${name}`);
-    }
-    return val.trim();
-}
-exports.getInput = getInput;
-/**
- * Sets the value of an output.
- *
- * @param     name     name of the output to set
- * @param     value    value to store. Non-string values will be converted to a string via JSON.stringify
- */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function setOutput(name, value) {
-    command_1.issueCommand('set-output', { name }, value);
-}
-exports.setOutput = setOutput;
-/**
- * Enables or disables the echoing of commands into stdout for the rest of the step.
- * Echoing is disabled by default if ACTIONS_STEP_DEBUG is not set.
- *
- */
-function setCommandEcho(enabled) {
-    command_1.issue('echo', enabled ? 'on' : 'off');
-}
-exports.setCommandEcho = setCommandEcho;
-//-----------------------------------------------------------------------
-// Results
-//-----------------------------------------------------------------------
-/**
- * Sets the action status to failed.
- * When the action exits it will be with an exit code of 1
- * @param message add error issue message
- */
-function setFailed(message) {
-    process.exitCode = ExitCode.Failure;
-    error(message);
-}
-exports.setFailed = setFailed;
-//-----------------------------------------------------------------------
-// Logging Commands
-//-----------------------------------------------------------------------
-/**
- * Gets whether Actions Step Debug is on or not
- */
-function isDebug() {
-    return process.env['RUNNER_DEBUG'] === '1';
-}
-exports.isDebug = isDebug;
-/**
- * Writes debug message to user log
- * @param message debug message
- */
-function debug(message) {
-    command_1.issueCommand('debug', {}, message);
-}
-exports.debug = debug;
-/**
- * Adds an error issue
- * @param message error issue message. Errors will be converted to string via toString()
- */
-function error(message) {
-    command_1.issue('error', message instanceof Error ? message.toString() : message);
-}
-exports.error = error;
-/**
- * Adds an warning issue
- * @param message warning issue message. Errors will be converted to string via toString()
- */
-function warning(message) {
-    command_1.issue('warning', message instanceof Error ? message.toString() : message);
-}
-exports.warning = warning;
-/**
- * Writes info to log with console.log.
- * @param message info message
- */
-function info(message) {
-    process.stdout.write(message + os.EOL);
-}
-exports.info = info;
-/**
- * Begin an output group.
- *
- * Output until the next `groupEnd` will be foldable in this group
- *
- * @param name The name of the output group
- */
-function startGroup(name) {
-    command_1.issue('group', name);
-}
-exports.startGroup = startGroup;
-/**
- * End an output group.
- */
-function endGroup() {
-    command_1.issue('endgroup');
-}
-exports.endGroup = endGroup;
-/**
- * Wrap an asynchronous function call in a group.
- *
- * Returns the same type as the function itself.
- *
- * @param name The name of the group
- * @param fn The function to wrap in the group
- */
-function group(name, fn) {
-    return __awaiter(this, void 0, void 0, function* () {
-        startGroup(name);
-        let result;
-        try {
-            result = yield fn();
-        }
-        finally {
-            endGroup();
-        }
-        return result;
-    });
-}
-exports.group = group;
-//-----------------------------------------------------------------------
-// Wrapper action state
-//-----------------------------------------------------------------------
-/**
- * Saves state for current action, the state can only be retrieved by this action's post job execution.
- *
- * @param     name     name of the state to store
- * @param     value    value to store. Non-string values will be converted to a string via JSON.stringify
- */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function saveState(name, value) {
-    command_1.issueCommand('save-state', { name }, value);
-}
-exports.saveState = saveState;
-/**
- * Gets the value of an state set by this action's main execution.
- *
- * @param     name     name of the state to get
- * @returns   string
- */
-function getState(name) {
-    return process.env[`STATE_${name}`] || '';
-}
-exports.getState = getState;
-//# sourceMappingURL=core.js.map
-
-/***/ }),
-
-/***/ 717:
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
-
-"use strict";
-
-// For internal use, subject to change.
-var __importStar = (this && this.__importStar) || function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null) for (var k in mod) if (Object.hasOwnProperty.call(mod, k)) result[k] = mod[k];
-    result["default"] = mod;
-    return result;
-};
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-// We use any as a valid input type
-/* eslint-disable @typescript-eslint/no-explicit-any */
-const fs = __importStar(__webpack_require__(747));
-const os = __importStar(__webpack_require__(87));
-const utils_1 = __webpack_require__(278);
-function issueCommand(command, message) {
-    const filePath = process.env[`GITHUB_${command}`];
-    if (!filePath) {
-        throw new Error(`Unable to find environment variable for file command ${command}`);
-    }
-    if (!fs.existsSync(filePath)) {
-        throw new Error(`Missing file at path: ${filePath}`);
-    }
-    fs.appendFileSync(filePath, `${utils_1.toCommandValue(message)}${os.EOL}`, {
-        encoding: 'utf8'
-    });
-}
-exports.issueCommand = issueCommand;
-//# sourceMappingURL=file-command.js.map
-
-/***/ }),
-
-/***/ 278:
-/***/ ((__unused_webpack_module, exports) => {
-
-"use strict";
-
-// We use any as a valid input type
-/* eslint-disable @typescript-eslint/no-explicit-any */
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-/**
- * Sanitizes an input into a string so it can be passed into issueCommand safely
- * @param input input to sanitize into a string
- */
-function toCommandValue(input) {
-    if (input === null || input === undefined) {
-        return '';
-    }
-    else if (typeof input === 'string' || input instanceof String) {
-        return input;
-    }
-    return JSON.stringify(input);
-}
-exports.toCommandValue = toCommandValue;
-//# sourceMappingURL=utils.js.map
-
-/***/ }),
-
-/***/ 53:
-/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.Context = void 0;
-const fs_1 = __webpack_require__(747);
-const os_1 = __webpack_require__(87);
-class Context {
-    /**
-     * Hydrate the context from the environment
-     */
-    constructor() {
-        this.payload = {};
-        if (process.env.GITHUB_EVENT_PATH) {
-            if (fs_1.existsSync(process.env.GITHUB_EVENT_PATH)) {
-                this.payload = JSON.parse(fs_1.readFileSync(process.env.GITHUB_EVENT_PATH, { encoding: 'utf8' }));
-            }
-            else {
-                const path = process.env.GITHUB_EVENT_PATH;
-                process.stdout.write(`GITHUB_EVENT_PATH ${path} does not exist${os_1.EOL}`);
-            }
-        }
-        this.eventName = process.env.GITHUB_EVENT_NAME;
-        this.sha = process.env.GITHUB_SHA;
-        this.ref = process.env.GITHUB_REF;
-        this.workflow = process.env.GITHUB_WORKFLOW;
-        this.action = process.env.GITHUB_ACTION;
-        this.actor = process.env.GITHUB_ACTOR;
-        this.job = process.env.GITHUB_JOB;
-        this.runNumber = parseInt(process.env.GITHUB_RUN_NUMBER, 10);
-        this.runId = parseInt(process.env.GITHUB_RUN_ID, 10);
-    }
-    get issue() {
-        const payload = this.payload;
-        return Object.assign(Object.assign({}, this.repo), { number: (payload.issue || payload.pull_request || payload).number });
-    }
-    get repo() {
-        if (process.env.GITHUB_REPOSITORY) {
-            const [owner, repo] = process.env.GITHUB_REPOSITORY.split('/');
-            return { owner, repo };
-        }
-        if (this.payload.repository) {
-            return {
-                owner: this.payload.repository.owner.login,
-                repo: this.payload.repository.name
-            };
-        }
-        throw new Error("context.repo requires a GITHUB_REPOSITORY environment variable like 'owner/repo'");
-    }
-}
-exports.Context = Context;
-//# sourceMappingURL=context.js.map
-
-/***/ }),
-
-/***/ 438:
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    Object.defineProperty(o, k2, { enumerable: true, get: function() { return m[k]; } });
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null) for (var k in mod) if (Object.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-    __setModuleDefault(result, mod);
-    return result;
-};
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.getOctokit = exports.context = void 0;
-const Context = __importStar(__webpack_require__(53));
-const utils_1 = __webpack_require__(30);
-exports.context = new Context.Context();
-/**
- * Returns a hydrated octokit ready to use for GitHub Actions
- *
- * @param     token    the repo PAT or GITHUB_TOKEN
- * @param     options  other options to set
- */
-function getOctokit(token, options) {
-    return new utils_1.GitHub(utils_1.getOctokitOptions(token, options));
-}
-exports.getOctokit = getOctokit;
-//# sourceMappingURL=github.js.map
-
-/***/ }),
-
-/***/ 914:
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    Object.defineProperty(o, k2, { enumerable: true, get: function() { return m[k]; } });
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null) for (var k in mod) if (Object.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-    __setModuleDefault(result, mod);
-    return result;
-};
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.getApiBaseUrl = exports.getProxyAgent = exports.getAuthString = void 0;
-const httpClient = __importStar(__webpack_require__(925));
-function getAuthString(token, options) {
-    if (!token && !options.auth) {
-        throw new Error('Parameter token or opts.auth is required');
-    }
-    else if (token && options.auth) {
-        throw new Error('Parameters token and opts.auth may not both be specified');
-    }
-    return typeof options.auth === 'string' ? options.auth : `token ${token}`;
-}
-exports.getAuthString = getAuthString;
-function getProxyAgent(destinationUrl) {
-    const hc = new httpClient.HttpClient();
-    return hc.getAgent(destinationUrl);
-}
-exports.getProxyAgent = getProxyAgent;
-function getApiBaseUrl() {
-    return process.env['GITHUB_API_URL'] || 'https://api.github.com';
-}
-exports.getApiBaseUrl = getApiBaseUrl;
-//# sourceMappingURL=utils.js.map
-
-/***/ }),
-
-/***/ 30:
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    Object.defineProperty(o, k2, { enumerable: true, get: function() { return m[k]; } });
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null) for (var k in mod) if (Object.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-    __setModuleDefault(result, mod);
-    return result;
-};
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.getOctokitOptions = exports.GitHub = exports.context = void 0;
-const Context = __importStar(__webpack_require__(53));
-const Utils = __importStar(__webpack_require__(914));
-// octokit + plugins
-const core_1 = __webpack_require__(762);
-const plugin_rest_endpoint_methods_1 = __webpack_require__(44);
-const plugin_paginate_rest_1 = __webpack_require__(193);
-exports.context = new Context.Context();
-const baseUrl = Utils.getApiBaseUrl();
-const defaults = {
-    baseUrl,
-    request: {
-        agent: Utils.getProxyAgent(baseUrl)
-    }
-};
-exports.GitHub = core_1.Octokit.plugin(plugin_rest_endpoint_methods_1.restEndpointMethods, plugin_paginate_rest_1.paginateRest).defaults(defaults);
-/**
- * Convience function to correctly format Octokit Options to pass into the constructor.
- *
- * @param     token    the repo PAT or GITHUB_TOKEN
- * @param     options  other options to set
- */
-function getOctokitOptions(token, options) {
-    const opts = Object.assign({}, options || {}); // Shallow clone - don't mutate the object provided by the caller
-    // Auth
-    const auth = Utils.getAuthString(token, opts);
-    if (auth) {
-        opts.auth = auth;
-    }
-    return opts;
-}
-exports.getOctokitOptions = getOctokitOptions;
-//# sourceMappingURL=utils.js.map
-
-/***/ }),
-
-/***/ 925:
-/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-const http = __webpack_require__(605);
-const https = __webpack_require__(211);
-const pm = __webpack_require__(443);
-let tunnel;
-var HttpCodes;
-(function (HttpCodes) {
-    HttpCodes[HttpCodes["OK"] = 200] = "OK";
-    HttpCodes[HttpCodes["MultipleChoices"] = 300] = "MultipleChoices";
-    HttpCodes[HttpCodes["MovedPermanently"] = 301] = "MovedPermanently";
-    HttpCodes[HttpCodes["ResourceMoved"] = 302] = "ResourceMoved";
-    HttpCodes[HttpCodes["SeeOther"] = 303] = "SeeOther";
-    HttpCodes[HttpCodes["NotModified"] = 304] = "NotModified";
-    HttpCodes[HttpCodes["UseProxy"] = 305] = "UseProxy";
-    HttpCodes[HttpCodes["SwitchProxy"] = 306] = "SwitchProxy";
-    HttpCodes[HttpCodes["TemporaryRedirect"] = 307] = "TemporaryRedirect";
-    HttpCodes[HttpCodes["PermanentRedirect"] = 308] = "PermanentRedirect";
-    HttpCodes[HttpCodes["BadRequest"] = 400] = "BadRequest";
-    HttpCodes[HttpCodes["Unauthorized"] = 401] = "Unauthorized";
-    HttpCodes[HttpCodes["PaymentRequired"] = 402] = "PaymentRequired";
-    HttpCodes[HttpCodes["Forbidden"] = 403] = "Forbidden";
-    HttpCodes[HttpCodes["NotFound"] = 404] = "NotFound";
-    HttpCodes[HttpCodes["MethodNotAllowed"] = 405] = "MethodNotAllowed";
-    HttpCodes[HttpCodes["NotAcceptable"] = 406] = "NotAcceptable";
-    HttpCodes[HttpCodes["ProxyAuthenticationRequired"] = 407] = "ProxyAuthenticationRequired";
-    HttpCodes[HttpCodes["RequestTimeout"] = 408] = "RequestTimeout";
-    HttpCodes[HttpCodes["Conflict"] = 409] = "Conflict";
-    HttpCodes[HttpCodes["Gone"] = 410] = "Gone";
-    HttpCodes[HttpCodes["TooManyRequests"] = 429] = "TooManyRequests";
-    HttpCodes[HttpCodes["InternalServerError"] = 500] = "InternalServerError";
-    HttpCodes[HttpCodes["NotImplemented"] = 501] = "NotImplemented";
-    HttpCodes[HttpCodes["BadGateway"] = 502] = "BadGateway";
-    HttpCodes[HttpCodes["ServiceUnavailable"] = 503] = "ServiceUnavailable";
-    HttpCodes[HttpCodes["GatewayTimeout"] = 504] = "GatewayTimeout";
-})(HttpCodes = exports.HttpCodes || (exports.HttpCodes = {}));
-var Headers;
-(function (Headers) {
-    Headers["Accept"] = "accept";
-    Headers["ContentType"] = "content-type";
-})(Headers = exports.Headers || (exports.Headers = {}));
-var MediaTypes;
-(function (MediaTypes) {
-    MediaTypes["ApplicationJson"] = "application/json";
-})(MediaTypes = exports.MediaTypes || (exports.MediaTypes = {}));
-/**
- * Returns the proxy URL, depending upon the supplied url and proxy environment variables.
- * @param serverUrl  The server URL where the request will be sent. For example, https://api.github.com
- */
-function getProxyUrl(serverUrl) {
-    let proxyUrl = pm.getProxyUrl(new URL(serverUrl));
-    return proxyUrl ? proxyUrl.href : '';
-}
-exports.getProxyUrl = getProxyUrl;
-const HttpRedirectCodes = [
-    HttpCodes.MovedPermanently,
-    HttpCodes.ResourceMoved,
-    HttpCodes.SeeOther,
-    HttpCodes.TemporaryRedirect,
-    HttpCodes.PermanentRedirect
-];
-const HttpResponseRetryCodes = [
-    HttpCodes.BadGateway,
-    HttpCodes.ServiceUnavailable,
-    HttpCodes.GatewayTimeout
-];
-const RetryableHttpVerbs = ['OPTIONS', 'GET', 'DELETE', 'HEAD'];
-const ExponentialBackoffCeiling = 10;
-const ExponentialBackoffTimeSlice = 5;
-class HttpClientError extends Error {
-    constructor(message, statusCode) {
-        super(message);
-        this.name = 'HttpClientError';
-        this.statusCode = statusCode;
-        Object.setPrototypeOf(this, HttpClientError.prototype);
-    }
-}
-exports.HttpClientError = HttpClientError;
-class HttpClientResponse {
-    constructor(message) {
-        this.message = message;
-    }
-    readBody() {
-        return new Promise(async (resolve, reject) => {
-            let output = Buffer.alloc(0);
-            this.message.on('data', (chunk) => {
-                output = Buffer.concat([output, chunk]);
-            });
-            this.message.on('end', () => {
-                resolve(output.toString());
-            });
-        });
-    }
-}
-exports.HttpClientResponse = HttpClientResponse;
-function isHttps(requestUrl) {
-    let parsedUrl = new URL(requestUrl);
-    return parsedUrl.protocol === 'https:';
-}
-exports.isHttps = isHttps;
-class HttpClient {
-    constructor(userAgent, handlers, requestOptions) {
-        this._ignoreSslError = false;
-        this._allowRedirects = true;
-        this._allowRedirectDowngrade = false;
-        this._maxRedirects = 50;
-        this._allowRetries = false;
-        this._maxRetries = 1;
-        this._keepAlive = false;
-        this._disposed = false;
-        this.userAgent = userAgent;
-        this.handlers = handlers || [];
-        this.requestOptions = requestOptions;
-        if (requestOptions) {
-            if (requestOptions.ignoreSslError != null) {
-                this._ignoreSslError = requestOptions.ignoreSslError;
-            }
-            this._socketTimeout = requestOptions.socketTimeout;
-            if (requestOptions.allowRedirects != null) {
-                this._allowRedirects = requestOptions.allowRedirects;
-            }
-            if (requestOptions.allowRedirectDowngrade != null) {
-                this._allowRedirectDowngrade = requestOptions.allowRedirectDowngrade;
-            }
-            if (requestOptions.maxRedirects != null) {
-                this._maxRedirects = Math.max(requestOptions.maxRedirects, 0);
-            }
-            if (requestOptions.keepAlive != null) {
-                this._keepAlive = requestOptions.keepAlive;
-            }
-            if (requestOptions.allowRetries != null) {
-                this._allowRetries = requestOptions.allowRetries;
-            }
-            if (requestOptions.maxRetries != null) {
-                this._maxRetries = requestOptions.maxRetries;
-            }
-        }
-    }
-    options(requestUrl, additionalHeaders) {
-        return this.request('OPTIONS', requestUrl, null, additionalHeaders || {});
-    }
-    get(requestUrl, additionalHeaders) {
-        return this.request('GET', requestUrl, null, additionalHeaders || {});
-    }
-    del(requestUrl, additionalHeaders) {
-        return this.request('DELETE', requestUrl, null, additionalHeaders || {});
-    }
-    post(requestUrl, data, additionalHeaders) {
-        return this.request('POST', requestUrl, data, additionalHeaders || {});
-    }
-    patch(requestUrl, data, additionalHeaders) {
-        return this.request('PATCH', requestUrl, data, additionalHeaders || {});
-    }
-    put(requestUrl, data, additionalHeaders) {
-        return this.request('PUT', requestUrl, data, additionalHeaders || {});
-    }
-    head(requestUrl, additionalHeaders) {
-        return this.request('HEAD', requestUrl, null, additionalHeaders || {});
-    }
-    sendStream(verb, requestUrl, stream, additionalHeaders) {
-        return this.request(verb, requestUrl, stream, additionalHeaders);
-    }
-    /**
-     * Gets a typed object from an endpoint
-     * Be aware that not found returns a null.  Other errors (4xx, 5xx) reject the promise
-     */
-    async getJson(requestUrl, additionalHeaders = {}) {
-        additionalHeaders[Headers.Accept] = this._getExistingOrDefaultHeader(additionalHeaders, Headers.Accept, MediaTypes.ApplicationJson);
-        let res = await this.get(requestUrl, additionalHeaders);
-        return this._processResponse(res, this.requestOptions);
-    }
-    async postJson(requestUrl, obj, additionalHeaders = {}) {
-        let data = JSON.stringify(obj, null, 2);
-        additionalHeaders[Headers.Accept] = this._getExistingOrDefaultHeader(additionalHeaders, Headers.Accept, MediaTypes.ApplicationJson);
-        additionalHeaders[Headers.ContentType] = this._getExistingOrDefaultHeader(additionalHeaders, Headers.ContentType, MediaTypes.ApplicationJson);
-        let res = await this.post(requestUrl, data, additionalHeaders);
-        return this._processResponse(res, this.requestOptions);
-    }
-    async putJson(requestUrl, obj, additionalHeaders = {}) {
-        let data = JSON.stringify(obj, null, 2);
-        additionalHeaders[Headers.Accept] = this._getExistingOrDefaultHeader(additionalHeaders, Headers.Accept, MediaTypes.ApplicationJson);
-        additionalHeaders[Headers.ContentType] = this._getExistingOrDefaultHeader(additionalHeaders, Headers.ContentType, MediaTypes.ApplicationJson);
-        let res = await this.put(requestUrl, data, additionalHeaders);
-        return this._processResponse(res, this.requestOptions);
-    }
-    async patchJson(requestUrl, obj, additionalHeaders = {}) {
-        let data = JSON.stringify(obj, null, 2);
-        additionalHeaders[Headers.Accept] = this._getExistingOrDefaultHeader(additionalHeaders, Headers.Accept, MediaTypes.ApplicationJson);
-        additionalHeaders[Headers.ContentType] = this._getExistingOrDefaultHeader(additionalHeaders, Headers.ContentType, MediaTypes.ApplicationJson);
-        let res = await this.patch(requestUrl, data, additionalHeaders);
-        return this._processResponse(res, this.requestOptions);
-    }
-    /**
-     * Makes a raw http request.
-     * All other methods such as get, post, patch, and request ultimately call this.
-     * Prefer get, del, post and patch
-     */
-    async request(verb, requestUrl, data, headers) {
-        if (this._disposed) {
-            throw new Error('Client has already been disposed.');
-        }
-        let parsedUrl = new URL(requestUrl);
-        let info = this._prepareRequest(verb, parsedUrl, headers);
-        // Only perform retries on reads since writes may not be idempotent.
-        let maxTries = this._allowRetries && RetryableHttpVerbs.indexOf(verb) != -1
-            ? this._maxRetries + 1
-            : 1;
-        let numTries = 0;
-        let response;
-        while (numTries < maxTries) {
-            response = await this.requestRaw(info, data);
-            // Check if it's an authentication challenge
-            if (response &&
-                response.message &&
-                response.message.statusCode === HttpCodes.Unauthorized) {
-                let authenticationHandler;
-                for (let i = 0; i < this.handlers.length; i++) {
-                    if (this.handlers[i].canHandleAuthentication(response)) {
-                        authenticationHandler = this.handlers[i];
-                        break;
-                    }
-                }
-                if (authenticationHandler) {
-                    return authenticationHandler.handleAuthentication(this, info, data);
-                }
-                else {
-                    // We have received an unauthorized response but have no handlers to handle it.
-                    // Let the response return to the caller.
-                    return response;
-                }
-            }
-            let redirectsRemaining = this._maxRedirects;
-            while (HttpRedirectCodes.indexOf(response.message.statusCode) != -1 &&
-                this._allowRedirects &&
-                redirectsRemaining > 0) {
-                const redirectUrl = response.message.headers['location'];
-                if (!redirectUrl) {
-                    // if there's no location to redirect to, we won't
-                    break;
-                }
-                let parsedRedirectUrl = new URL(redirectUrl);
-                if (parsedUrl.protocol == 'https:' &&
-                    parsedUrl.protocol != parsedRedirectUrl.protocol &&
-                    !this._allowRedirectDowngrade) {
-                    throw new Error('Redirect from HTTPS to HTTP protocol. This downgrade is not allowed for security reasons. If you want to allow this behavior, set the allowRedirectDowngrade option to true.');
-                }
-                // we need to finish reading the response before reassigning response
-                // which will leak the open socket.
-                await response.readBody();
-                // strip authorization header if redirected to a different hostname
-                if (parsedRedirectUrl.hostname !== parsedUrl.hostname) {
-                    for (let header in headers) {
-                        // header names are case insensitive
-                        if (header.toLowerCase() === 'authorization') {
-                            delete headers[header];
-                        }
-                    }
-                }
-                // let's make the request with the new redirectUrl
-                info = this._prepareRequest(verb, parsedRedirectUrl, headers);
-                response = await this.requestRaw(info, data);
-                redirectsRemaining--;
-            }
-            if (HttpResponseRetryCodes.indexOf(response.message.statusCode) == -1) {
-                // If not a retry code, return immediately instead of retrying
-                return response;
-            }
-            numTries += 1;
-            if (numTries < maxTries) {
-                await response.readBody();
-                await this._performExponentialBackoff(numTries);
-            }
-        }
-        return response;
-    }
-    /**
-     * Needs to be called if keepAlive is set to true in request options.
-     */
-    dispose() {
-        if (this._agent) {
-            this._agent.destroy();
-        }
-        this._disposed = true;
-    }
-    /**
-     * Raw request.
-     * @param info
-     * @param data
-     */
-    requestRaw(info, data) {
-        return new Promise((resolve, reject) => {
-            let callbackForResult = function (err, res) {
-                if (err) {
-                    reject(err);
-                }
-                resolve(res);
-            };
-            this.requestRawWithCallback(info, data, callbackForResult);
-        });
-    }
-    /**
-     * Raw request with callback.
-     * @param info
-     * @param data
-     * @param onResult
-     */
-    requestRawWithCallback(info, data, onResult) {
-        let socket;
-        if (typeof data === 'string') {
-            info.options.headers['Content-Length'] = Buffer.byteLength(data, 'utf8');
-        }
-        let callbackCalled = false;
-        let handleResult = (err, res) => {
-            if (!callbackCalled) {
-                callbackCalled = true;
-                onResult(err, res);
-            }
-        };
-        let req = info.httpModule.request(info.options, (msg) => {
-            let res = new HttpClientResponse(msg);
-            handleResult(null, res);
-        });
-        req.on('socket', sock => {
-            socket = sock;
-        });
-        // If we ever get disconnected, we want the socket to timeout eventually
-        req.setTimeout(this._socketTimeout || 3 * 60000, () => {
-            if (socket) {
-                socket.end();
-            }
-            handleResult(new Error('Request timeout: ' + info.options.path), null);
-        });
-        req.on('error', function (err) {
-            // err has statusCode property
-            // res should have headers
-            handleResult(err, null);
-        });
-        if (data && typeof data === 'string') {
-            req.write(data, 'utf8');
-        }
-        if (data && typeof data !== 'string') {
-            data.on('close', function () {
-                req.end();
-            });
-            data.pipe(req);
-        }
-        else {
-            req.end();
-        }
-    }
-    /**
-     * Gets an http agent. This function is useful when you need an http agent that handles
-     * routing through a proxy server - depending upon the url and proxy environment variables.
-     * @param serverUrl  The server URL where the request will be sent. For example, https://api.github.com
-     */
-    getAgent(serverUrl) {
-        let parsedUrl = new URL(serverUrl);
-        return this._getAgent(parsedUrl);
-    }
-    _prepareRequest(method, requestUrl, headers) {
-        const info = {};
-        info.parsedUrl = requestUrl;
-        const usingSsl = info.parsedUrl.protocol === 'https:';
-        info.httpModule = usingSsl ? https : http;
-        const defaultPort = usingSsl ? 443 : 80;
-        info.options = {};
-        info.options.host = info.parsedUrl.hostname;
-        info.options.port = info.parsedUrl.port
-            ? parseInt(info.parsedUrl.port)
-            : defaultPort;
-        info.options.path =
-            (info.parsedUrl.pathname || '') + (info.parsedUrl.search || '');
-        info.options.method = method;
-        info.options.headers = this._mergeHeaders(headers);
-        if (this.userAgent != null) {
-            info.options.headers['user-agent'] = this.userAgent;
-        }
-        info.options.agent = this._getAgent(info.parsedUrl);
-        // gives handlers an opportunity to participate
-        if (this.handlers) {
-            this.handlers.forEach(handler => {
-                handler.prepareRequest(info.options);
-            });
-        }
-        return info;
-    }
-    _mergeHeaders(headers) {
-        const lowercaseKeys = obj => Object.keys(obj).reduce((c, k) => ((c[k.toLowerCase()] = obj[k]), c), {});
-        if (this.requestOptions && this.requestOptions.headers) {
-            return Object.assign({}, lowercaseKeys(this.requestOptions.headers), lowercaseKeys(headers));
-        }
-        return lowercaseKeys(headers || {});
-    }
-    _getExistingOrDefaultHeader(additionalHeaders, header, _default) {
-        const lowercaseKeys = obj => Object.keys(obj).reduce((c, k) => ((c[k.toLowerCase()] = obj[k]), c), {});
-        let clientHeader;
-        if (this.requestOptions && this.requestOptions.headers) {
-            clientHeader = lowercaseKeys(this.requestOptions.headers)[header];
-        }
-        return additionalHeaders[header] || clientHeader || _default;
-    }
-    _getAgent(parsedUrl) {
-        let agent;
-        let proxyUrl = pm.getProxyUrl(parsedUrl);
-        let useProxy = proxyUrl && proxyUrl.hostname;
-        if (this._keepAlive && useProxy) {
-            agent = this._proxyAgent;
-        }
-        if (this._keepAlive && !useProxy) {
-            agent = this._agent;
-        }
-        // if agent is already assigned use that agent.
-        if (!!agent) {
-            return agent;
-        }
-        const usingSsl = parsedUrl.protocol === 'https:';
-        let maxSockets = 100;
-        if (!!this.requestOptions) {
-            maxSockets = this.requestOptions.maxSockets || http.globalAgent.maxSockets;
-        }
-        if (useProxy) {
-            // If using proxy, need tunnel
-            if (!tunnel) {
-                tunnel = __webpack_require__(294);
-            }
-            const agentOptions = {
-                maxSockets: maxSockets,
-                keepAlive: this._keepAlive,
-                proxy: {
-                    proxyAuth: `${proxyUrl.username}:${proxyUrl.password}`,
-                    host: proxyUrl.hostname,
-                    port: proxyUrl.port
-                }
-            };
-            let tunnelAgent;
-            const overHttps = proxyUrl.protocol === 'https:';
-            if (usingSsl) {
-                tunnelAgent = overHttps ? tunnel.httpsOverHttps : tunnel.httpsOverHttp;
-            }
-            else {
-                tunnelAgent = overHttps ? tunnel.httpOverHttps : tunnel.httpOverHttp;
-            }
-            agent = tunnelAgent(agentOptions);
-            this._proxyAgent = agent;
-        }
-        // if reusing agent across request and tunneling agent isn't assigned create a new agent
-        if (this._keepAlive && !agent) {
-            const options = { keepAlive: this._keepAlive, maxSockets: maxSockets };
-            agent = usingSsl ? new https.Agent(options) : new http.Agent(options);
-            this._agent = agent;
-        }
-        // if not using private agent and tunnel agent isn't setup then use global agent
-        if (!agent) {
-            agent = usingSsl ? https.globalAgent : http.globalAgent;
-        }
-        if (usingSsl && this._ignoreSslError) {
-            // we don't want to set NODE_TLS_REJECT_UNAUTHORIZED=0 since that will affect request for entire process
-            // http.RequestOptions doesn't expose a way to modify RequestOptions.agent.options
-            // we have to cast it to any and change it directly
-            agent.options = Object.assign(agent.options || {}, {
-                rejectUnauthorized: false
-            });
-        }
-        return agent;
-    }
-    _performExponentialBackoff(retryNumber) {
-        retryNumber = Math.min(ExponentialBackoffCeiling, retryNumber);
-        const ms = ExponentialBackoffTimeSlice * Math.pow(2, retryNumber);
-        return new Promise(resolve => setTimeout(() => resolve(), ms));
-    }
-    static dateTimeDeserializer(key, value) {
-        if (typeof value === 'string') {
-            let a = new Date(value);
-            if (!isNaN(a.valueOf())) {
-                return a;
-            }
-        }
-        return value;
-    }
-    async _processResponse(res, options) {
-        return new Promise(async (resolve, reject) => {
-            const statusCode = res.message.statusCode;
-            const response = {
-                statusCode: statusCode,
-                result: null,
-                headers: {}
-            };
-            // not found leads to null obj returned
-            if (statusCode == HttpCodes.NotFound) {
-                resolve(response);
-            }
-            let obj;
-            let contents;
-            // get the result from the body
-            try {
-                contents = await res.readBody();
-                if (contents && contents.length > 0) {
-                    if (options && options.deserializeDates) {
-                        obj = JSON.parse(contents, HttpClient.dateTimeDeserializer);
-                    }
-                    else {
-                        obj = JSON.parse(contents);
-                    }
-                    response.result = obj;
-                }
-                response.headers = res.message.headers;
-            }
-            catch (err) {
-                // Invalid resource (contents not json);  leaving result obj null
-            }
-            // note that 3xx redirects are handled by the http layer.
-            if (statusCode > 299) {
-                let msg;
-                // if exception/error in body, attempt to get better error
-                if (obj && obj.message) {
-                    msg = obj.message;
-                }
-                else if (contents && contents.length > 0) {
-                    // it may be the case that the exception is in the body message as string
-                    msg = contents;
-                }
-                else {
-                    msg = 'Failed request: (' + statusCode + ')';
-                }
-                let err = new HttpClientError(msg, statusCode);
-                err.result = response.result;
-                reject(err);
-            }
-            else {
-                resolve(response);
-            }
-        });
-    }
-}
-exports.HttpClient = HttpClient;
-
-
-/***/ }),
-
-/***/ 443:
-/***/ ((__unused_webpack_module, exports) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-function getProxyUrl(reqUrl) {
-    let usingSsl = reqUrl.protocol === 'https:';
-    let proxyUrl;
-    if (checkBypass(reqUrl)) {
-        return proxyUrl;
-    }
-    let proxyVar;
-    if (usingSsl) {
-        proxyVar = process.env['https_proxy'] || process.env['HTTPS_PROXY'];
-    }
-    else {
-        proxyVar = process.env['http_proxy'] || process.env['HTTP_PROXY'];
-    }
-    if (proxyVar) {
-        proxyUrl = new URL(proxyVar);
-    }
-    return proxyUrl;
-}
-exports.getProxyUrl = getProxyUrl;
-function checkBypass(reqUrl) {
-    if (!reqUrl.hostname) {
-        return false;
-    }
-    let noProxy = process.env['no_proxy'] || process.env['NO_PROXY'] || '';
-    if (!noProxy) {
-        return false;
-    }
-    // Determine the request port
-    let reqPort;
-    if (reqUrl.port) {
-        reqPort = Number(reqUrl.port);
-    }
-    else if (reqUrl.protocol === 'http:') {
-        reqPort = 80;
-    }
-    else if (reqUrl.protocol === 'https:') {
-        reqPort = 443;
-    }
-    // Format the request hostname and hostname with port
-    let upperReqHosts = [reqUrl.hostname.toUpperCase()];
-    if (typeof reqPort === 'number') {
-        upperReqHosts.push(`${upperReqHosts[0]}:${reqPort}`);
-    }
-    // Compare request host against noproxy
-    for (let upperNoProxyItem of noProxy
-        .split(',')
-        .map(x => x.trim().toUpperCase())
-        .filter(x => x)) {
-        if (upperReqHosts.some(x => x === upperNoProxyItem)) {
-            return true;
-        }
-    }
-    return false;
-}
-exports.checkBypass = checkBypass;
+exports.handler = handler;
 
 
 /***/ }),
@@ -1414,7 +219,7 @@ exports.createTokenAuth = createTokenAuth;
 
 /***/ }),
 
-/***/ 762:
+/***/ 6762:
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -1422,10 +227,10 @@ exports.createTokenAuth = createTokenAuth;
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 
-var universalUserAgent = __webpack_require__(429);
-var beforeAfterHook = __webpack_require__(682);
-var request = __webpack_require__(234);
-var graphql = __webpack_require__(668);
+var universalUserAgent = __webpack_require__(5030);
+var beforeAfterHook = __webpack_require__(3682);
+var request = __webpack_require__(6234);
+var graphql = __webpack_require__(8467);
 var authToken = __webpack_require__(334);
 
 function _objectWithoutPropertiesLoose(source, excluded) {
@@ -1597,7 +402,7 @@ exports.Octokit = Octokit;
 
 /***/ }),
 
-/***/ 440:
+/***/ 9440:
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -1606,7 +411,7 @@ exports.Octokit = Octokit;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 
 var isPlainObject = __webpack_require__(558);
-var universalUserAgent = __webpack_require__(429);
+var universalUserAgent = __webpack_require__(5030);
 
 function lowercaseKeys(object) {
   if (!object) {
@@ -2041,7 +846,7 @@ exports.isPlainObject = isPlainObject;
 
 /***/ }),
 
-/***/ 668:
+/***/ 8467:
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -2049,8 +854,8 @@ exports.isPlainObject = isPlainObject;
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 
-var request = __webpack_require__(234);
-var universalUserAgent = __webpack_require__(429);
+var request = __webpack_require__(6234);
+var universalUserAgent = __webpack_require__(5030);
 
 const VERSION = "4.6.1";
 
@@ -2165,7 +970,7 @@ exports.withCustomRequest = withCustomRequest;
 
 /***/ }),
 
-/***/ 193:
+/***/ 4193:
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -2173,7 +978,7 @@ exports.withCustomRequest = withCustomRequest;
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 
-const VERSION = "2.13.0";
+const VERSION = "2.13.2";
 
 /**
  * Some “list” response that can be paginated have a different response structure
@@ -2317,7 +1122,45 @@ exports.paginatingEndpoints = paginatingEndpoints;
 
 /***/ }),
 
-/***/ 44:
+/***/ 8883:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+const VERSION = "1.0.3";
+
+/**
+ * @param octokit Octokit instance
+ * @param options Options passed to Octokit constructor
+ */
+
+function requestLog(octokit) {
+  octokit.hook.wrap("request", (request, options) => {
+    octokit.log.debug("request", options);
+    const start = Date.now();
+    const requestOptions = octokit.request.endpoint.parse(options);
+    const path = requestOptions.url.replace(options.baseUrl, "");
+    return request(options).then(response => {
+      octokit.log.info(`${requestOptions.method} ${path} - ${response.status} in ${Date.now() - start}ms`);
+      return response;
+    }).catch(error => {
+      octokit.log.info(`${requestOptions.method} ${path} - ${error.status} in ${Date.now() - start}ms`);
+      throw error;
+    });
+  });
+}
+requestLog.VERSION = VERSION;
+
+exports.requestLog = requestLog;
+//# sourceMappingURL=index.js.map
+
+
+/***/ }),
+
+/***/ 3044:
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -3505,8 +2348,8 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 
 function _interopDefault (ex) { return (ex && (typeof ex === 'object') && 'default' in ex) ? ex['default'] : ex; }
 
-var deprecation = __webpack_require__(932);
-var once = _interopDefault(__webpack_require__(223));
+var deprecation = __webpack_require__(8932);
+var once = _interopDefault(__webpack_require__(1223));
 
 const logOnce = once(deprecation => console.warn(deprecation));
 /**
@@ -3558,7 +2401,7 @@ exports.RequestError = RequestError;
 
 /***/ }),
 
-/***/ 234:
+/***/ 6234:
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -3568,9 +2411,9 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 
 function _interopDefault (ex) { return (ex && (typeof ex === 'object') && 'default' in ex) ? ex['default'] : ex; }
 
-var endpoint = __webpack_require__(440);
-var universalUserAgent = __webpack_require__(429);
-var isPlainObject = __webpack_require__(62);
+var endpoint = __webpack_require__(9440);
+var universalUserAgent = __webpack_require__(5030);
+var isPlainObject = __webpack_require__(9062);
 var nodeFetch = _interopDefault(__webpack_require__(467));
 var requestError = __webpack_require__(537);
 
@@ -3714,7 +2557,7 @@ exports.request = request;
 
 /***/ }),
 
-/***/ 62:
+/***/ 9062:
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -3760,12 +2603,83 @@ exports.isPlainObject = isPlainObject;
 
 /***/ }),
 
-/***/ 682:
+/***/ 5375:
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var core = __webpack_require__(6762);
+var pluginRequestLog = __webpack_require__(8883);
+var pluginPaginateRest = __webpack_require__(4193);
+var pluginRestEndpointMethods = __webpack_require__(3044);
+
+const VERSION = "18.3.5";
+
+const Octokit = core.Octokit.plugin(pluginRequestLog.requestLog, pluginRestEndpointMethods.restEndpointMethods, pluginPaginateRest.paginateRest).defaults({
+  userAgent: `octokit-rest.js/${VERSION}`
+});
+
+exports.Octokit = Octokit;
+//# sourceMappingURL=index.js.map
+
+
+/***/ }),
+
+/***/ 6950:
+/***/ ((module) => {
+
+"use strict";
+
+
+/* global SharedArrayBuffer, Atomics */
+
+if (typeof SharedArrayBuffer !== 'undefined' && typeof Atomics !== 'undefined') {
+  const nil = new Int32Array(new SharedArrayBuffer(4))
+
+  function sleep (ms) {
+    // also filters out NaN, non-number types, including empty strings, but allows bigints
+    const valid = ms > 0 && ms < Infinity 
+    if (valid === false) {
+      if (typeof ms !== 'number' && typeof ms !== 'bigint') {
+        throw TypeError('sleep: ms must be a number')
+      }
+      throw RangeError('sleep: ms must be a number that is greater than 0 but less than Infinity')
+    }
+
+    Atomics.wait(nil, 0, 0, Number(ms))
+  }
+  module.exports = sleep
+} else {
+
+  function sleep (ms) {
+    // also filters out NaN, non-number types, including empty strings, but allows bigints
+    const valid = ms > 0 && ms < Infinity 
+    if (valid === false) {
+      if (typeof ms !== 'number' && typeof ms !== 'bigint') {
+        throw TypeError('sleep: ms must be a number')
+      }
+      throw RangeError('sleep: ms must be a number that is greater than 0 but less than Infinity')
+    }
+    const target = Date.now() + Number(ms)
+    while (target > Date.now()){}
+  }
+
+  module.exports = sleep
+
+}
+
+
+/***/ }),
+
+/***/ 3682:
 /***/ ((module, __unused_webpack_exports, __webpack_require__) => {
 
-var register = __webpack_require__(670)
-var addHook = __webpack_require__(549)
-var removeHook = __webpack_require__(819)
+var register = __webpack_require__(4670)
+var addHook = __webpack_require__(5549)
+var removeHook = __webpack_require__(6819)
 
 // bind with array of arguments: https://stackoverflow.com/a/21792913
 var bind = Function.bind
@@ -3824,7 +2738,7 @@ module.exports.Collection = Hook.Collection
 
 /***/ }),
 
-/***/ 549:
+/***/ 5549:
 /***/ ((module) => {
 
 module.exports = addHook;
@@ -3877,7 +2791,7 @@ function addHook(state, kind, name, hook) {
 
 /***/ }),
 
-/***/ 670:
+/***/ 4670:
 /***/ ((module) => {
 
 module.exports = register;
@@ -3911,7 +2825,7 @@ function register(state, name, method, options) {
 
 /***/ }),
 
-/***/ 819:
+/***/ 6819:
 /***/ ((module) => {
 
 module.exports = removeHook;
@@ -3937,7 +2851,7 @@ function removeHook(state, name, method) {
 
 /***/ }),
 
-/***/ 932:
+/***/ 8932:
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -3965,6 +2879,718 @@ exports.Deprecation = Deprecation;
 
 /***/ }),
 
+/***/ 4826:
+/***/ ((module, __unused_webpack_exports, __webpack_require__) => {
+
+"use strict";
+
+
+const validator = __webpack_require__(4174)
+const parse = __webpack_require__(6214)
+const redactor = __webpack_require__(7333)
+const restorer = __webpack_require__(8806)
+const { groupRedact, nestedRedact } = __webpack_require__(4865)
+const state = __webpack_require__(1012)
+const rx = __webpack_require__(9158)
+const validate = validator()
+const noop = (o) => o
+noop.restore = noop
+
+const DEFAULT_CENSOR = '[REDACTED]'
+fastRedact.rx = rx
+fastRedact.validator = validator
+
+module.exports = fastRedact
+
+function fastRedact (opts = {}) {
+  const paths = Array.from(new Set(opts.paths || []))
+  const serialize = 'serialize' in opts ? (
+    opts.serialize === false ? opts.serialize
+      : (typeof opts.serialize === 'function' ? opts.serialize : JSON.stringify)
+  ) : JSON.stringify
+  const remove = opts.remove
+  if (remove === true && serialize !== JSON.stringify) {
+    throw Error('fast-redact – remove option may only be set when serializer is JSON.stringify')
+  }
+  const censor = remove === true
+    ? undefined
+    : 'censor' in opts ? opts.censor : DEFAULT_CENSOR
+
+  const isCensorFct = typeof censor === 'function'
+  const censorFctTakesPath = isCensorFct && censor.length > 1
+
+  if (paths.length === 0) return serialize || noop
+
+  validate({ paths, serialize, censor })
+
+  const { wildcards, wcLen, secret } = parse({ paths, censor })
+
+  const compileRestore = restorer({ secret, wcLen })
+  const strict = 'strict' in opts ? opts.strict : true
+
+  return redactor({ secret, wcLen, serialize, strict, isCensorFct, censorFctTakesPath }, state({
+    secret,
+    censor,
+    compileRestore,
+    serialize,
+    groupRedact,
+    nestedRedact,
+    wildcards,
+    wcLen
+  }))
+}
+
+
+/***/ }),
+
+/***/ 4865:
+/***/ ((module) => {
+
+"use strict";
+
+
+module.exports = {
+  groupRedact,
+  groupRestore,
+  nestedRedact,
+  nestedRestore
+}
+
+function groupRestore ({ keys, values, target }) {
+  if (target == null) return
+  const length = keys.length
+  for (var i = 0; i < length; i++) {
+    const k = keys[i]
+    target[k] = values[i]
+  }
+}
+
+function groupRedact (o, path, censor, isCensorFct, censorFctTakesPath) {
+  const target = get(o, path)
+  if (target == null) return { keys: null, values: null, target: null, flat: true }
+  const keys = Object.keys(target)
+  const keysLength = keys.length
+  const pathLength = path.length
+  const pathWithKey = censorFctTakesPath ? [...path] : undefined
+  const values = new Array(keysLength)
+
+  for (var i = 0; i < keysLength; i++) {
+    const key = keys[i]
+    values[i] = target[key]
+
+    if (censorFctTakesPath) {
+      pathWithKey[pathLength] = key
+      target[key] = censor(target[key], pathWithKey)
+    } else if (isCensorFct) {
+      target[key] = censor(target[key])
+    } else {
+      target[key] = censor
+    }
+  }
+  return { keys, values, target, flat: true }
+}
+
+function nestedRestore (arr) {
+  const length = arr.length
+  for (var i = 0; i < length; i++) {
+    const { key, target, value } = arr[i]
+    target[key] = value
+  }
+}
+
+function nestedRedact (store, o, path, ns, censor, isCensorFct, censorFctTakesPath) {
+  const target = get(o, path)
+  if (target == null) return
+  const keys = Object.keys(target)
+  const keysLength = keys.length
+  for (var i = 0; i < keysLength; i++) {
+    const key = keys[i]
+    const { value, parent, exists } =
+      specialSet(target, key, path, ns, censor, isCensorFct, censorFctTakesPath)
+
+    if (exists === true && parent !== null) {
+      store.push({ key: ns[ns.length - 1], target: parent, value })
+    }
+  }
+  return store
+}
+
+function has (obj, prop) {
+  return Object.prototype.hasOwnProperty.call(obj, prop)
+}
+
+function specialSet (o, k, path, afterPath, censor, isCensorFct, censorFctTakesPath) {
+  const afterPathLen = afterPath.length
+  const lastPathIndex = afterPathLen - 1
+  const originalKey = k
+  var i = -1
+  var n
+  var nv
+  var ov
+  var oov = null
+  var exists = true
+  ov = n = o[k]
+  if (typeof n !== 'object') return { value: null, parent: null, exists }
+  while (n != null && ++i < afterPathLen) {
+    k = afterPath[i]
+    oov = ov
+    if (!(k in n)) {
+      exists = false
+      break
+    }
+    ov = n[k]
+    nv = (i !== lastPathIndex)
+      ? ov
+      : (isCensorFct
+        ? (censorFctTakesPath ? censor(ov, [...path, originalKey, ...afterPath]) : censor(ov))
+        : censor)
+    n[k] = (has(n, k) && nv === ov) || (nv === undefined && censor !== undefined) ? n[k] : nv
+    n = n[k]
+    if (typeof n !== 'object') break
+  }
+  return { value: ov, parent: oov, exists }
+}
+
+function get (o, p) {
+  var i = -1
+  var l = p.length
+  var n = o
+  while (n != null && ++i < l) {
+    n = n[p[i]]
+  }
+  return n
+}
+
+
+/***/ }),
+
+/***/ 6214:
+/***/ ((module, __unused_webpack_exports, __webpack_require__) => {
+
+"use strict";
+
+
+const rx = __webpack_require__(9158)
+
+module.exports = parse
+
+function parse ({ paths }) {
+  const wildcards = []
+  var wcLen = 0
+  const secret = paths.reduce(function (o, strPath, ix) {
+    var path = strPath.match(rx).map((p) => p.replace(/'|"|`/g, ''))
+    const leadingBracket = strPath[0] === '['
+    path = path.map((p) => {
+      if (p[0] === '[') return p.substr(1, p.length - 2)
+      else return p
+    })
+    const star = path.indexOf('*')
+    if (star > -1) {
+      const before = path.slice(0, star)
+      const beforeStr = before.join('.')
+      const after = path.slice(star + 1, path.length)
+      if (after.indexOf('*') > -1) throw Error('fast-redact – Only one wildcard per path is supported')
+      const nested = after.length > 0
+      wcLen++
+      wildcards.push({
+        before,
+        beforeStr,
+        after,
+        nested
+      })
+    } else {
+      o[strPath] = {
+        path: path,
+        val: undefined,
+        precensored: false,
+        circle: '',
+        escPath: JSON.stringify(strPath),
+        leadingBracket: leadingBracket
+      }
+    }
+    return o
+  }, {})
+
+  return { wildcards, wcLen, secret }
+}
+
+
+/***/ }),
+
+/***/ 7333:
+/***/ ((module, __unused_webpack_exports, __webpack_require__) => {
+
+"use strict";
+
+
+const rx = __webpack_require__(9158)
+
+module.exports = redactor
+
+function redactor ({ secret, serialize, wcLen, strict, isCensorFct, censorFctTakesPath }, state) {
+  /* eslint-disable-next-line */
+  const redact = Function('o', `
+    if (typeof o !== 'object' || o == null) {
+      ${strictImpl(strict, serialize)}
+    }
+    const { censor, secret } = this
+    ${redactTmpl(secret, isCensorFct, censorFctTakesPath)}
+    this.compileRestore()
+    ${dynamicRedactTmpl(wcLen > 0, isCensorFct, censorFctTakesPath)}
+    ${resultTmpl(serialize)}
+  `).bind(state)
+
+  if (serialize === false) {
+    redact.restore = (o) => state.restore(o)
+  }
+
+  return redact
+}
+
+function redactTmpl (secret, isCensorFct, censorFctTakesPath) {
+  return Object.keys(secret).map((path) => {
+    const { escPath, leadingBracket, path: arrPath } = secret[path]
+    const skip = leadingBracket ? 1 : 0
+    const delim = leadingBracket ? '' : '.'
+    const hops = []
+    var match
+    while ((match = rx.exec(path)) !== null) {
+      const [ , ix ] = match
+      const { index, input } = match
+      if (index > skip) hops.push(input.substring(0, index - (ix ? 0 : 1)))
+    }
+    var existence = hops.map((p) => `o${delim}${p}`).join(' && ')
+    if (existence.length === 0) existence += `o${delim}${path} != null`
+    else existence += ` && o${delim}${path} != null`
+
+    const circularDetection = `
+      switch (true) {
+        ${hops.reverse().map((p) => `
+          case o${delim}${p} === censor:
+            secret[${escPath}].circle = ${JSON.stringify(p)}
+            break
+        `).join('\n')}
+      }
+    `
+
+    const censorArgs = censorFctTakesPath
+      ? `val, ${JSON.stringify(arrPath)}`
+      : `val`
+
+    return `
+      if (${existence}) {
+        const val = o${delim}${path}
+        if (val === censor) {
+          secret[${escPath}].precensored = true
+        } else {
+          secret[${escPath}].val = val
+          o${delim}${path} = ${isCensorFct ? `censor(${censorArgs})` : 'censor'}
+          ${circularDetection}
+        }
+      }
+    `
+  }).join('\n')
+}
+
+function dynamicRedactTmpl (hasWildcards, isCensorFct, censorFctTakesPath) {
+  return hasWildcards === true ? `
+    {
+      const { wildcards, wcLen, groupRedact, nestedRedact } = this
+      for (var i = 0; i < wcLen; i++) {
+        const { before, beforeStr, after, nested } = wildcards[i]
+        if (nested === true) {
+          secret[beforeStr] = secret[beforeStr] || []
+          nestedRedact(secret[beforeStr], o, before, after, censor, ${isCensorFct}, ${censorFctTakesPath})
+        } else secret[beforeStr] = groupRedact(o, before, censor, ${isCensorFct}, ${censorFctTakesPath})
+      }
+    }
+  ` : ''
+}
+
+function resultTmpl (serialize) {
+  return serialize === false ? `return o` : `
+    var s = this.serialize(o)
+    this.restore(o)
+    return s
+  `
+}
+
+function strictImpl (strict, serialize) {
+  return strict === true
+    ? `throw Error('fast-redact: primitives cannot be redacted')`
+    : serialize === false ? `return o` : `return this.serialize(o)`
+}
+
+
+/***/ }),
+
+/***/ 8806:
+/***/ ((module, __unused_webpack_exports, __webpack_require__) => {
+
+"use strict";
+
+
+const { groupRestore, nestedRestore } = __webpack_require__(4865)
+
+module.exports = restorer
+
+function restorer ({ secret, wcLen }) {
+  return function compileRestore () {
+    if (this.restore) return
+    const paths = Object.keys(secret)
+      .filter((path) => secret[path].precensored === false)
+    const resetters = resetTmpl(secret, paths)
+    const hasWildcards = wcLen > 0
+    const state = hasWildcards ? { secret, groupRestore, nestedRestore } : { secret }
+    /* eslint-disable-next-line */
+    this.restore = Function(
+      'o',
+      restoreTmpl(resetters, paths, hasWildcards)
+    ).bind(state)
+  }
+}
+
+/**
+ * Mutates the original object to be censored by restoring its original values
+ * prior to censoring.
+ *
+ * @param {object} secret Compiled object describing which target fields should
+ * be censored and the field states.
+ * @param {string[]} paths The list of paths to censor as provided at
+ * initialization time.
+ *
+ * @returns {string} String of JavaScript to be used by `Function()`. The
+ * string compiles to the function that does the work in the description.
+ */
+function resetTmpl (secret, paths) {
+  return paths.map((path) => {
+    const { circle, escPath, leadingBracket } = secret[path]
+    const delim = leadingBracket ? '' : '.'
+    const reset = circle
+      ? `o.${circle} = secret[${escPath}].val`
+      : `o${delim}${path} = secret[${escPath}].val`
+    const clear = `secret[${escPath}].val = undefined`
+    return `
+      if (secret[${escPath}].val !== undefined) {
+        try { ${reset} } catch (e) {}
+        ${clear}
+      }
+    `
+  }).join('')
+}
+
+function restoreTmpl (resetters, paths, hasWildcards) {
+  const dynamicReset = hasWildcards === true ? `
+    const keys = Object.keys(secret)
+    const len = keys.length
+    for (var i = ${paths.length}; i < len; i++) {
+      const k = keys[i]
+      const o = secret[k]
+      if (o.flat === true) this.groupRestore(o)
+      else this.nestedRestore(o)
+      secret[k] = null
+    }
+  ` : ''
+
+  return `
+    const secret = this.secret
+    ${resetters}
+    ${dynamicReset}
+    return o
+  `
+}
+
+
+/***/ }),
+
+/***/ 9158:
+/***/ ((module) => {
+
+"use strict";
+
+
+module.exports = /[^.[\]]+|\[((?:.)*?)\]/g
+
+/*
+Regular expression explanation:
+
+Alt 1: /[^.[\]]+/ - Match one or more characters that are *not* a dot (.)
+                    opening square bracket ([) or closing square bracket (])
+
+Alt 2: /\[((?:.)*?)\]/ - If the char IS dot or square bracket, then create a capture
+                         group (which will be capture group $1) that matches anything
+                         within square brackets. Expansion is lazy so it will
+                         stop matching as soon as the first closing bracket is met `]`
+                         (rather than continuing to match until the final closing bracket).
+*/
+
+
+/***/ }),
+
+/***/ 1012:
+/***/ ((module) => {
+
+"use strict";
+
+
+module.exports = state
+
+function state (o) {
+  const {
+    secret,
+    censor,
+    compileRestore,
+    serialize,
+    groupRedact,
+    nestedRedact,
+    wildcards,
+    wcLen
+  } = o
+  const builder = [{ secret, censor, compileRestore }]
+  if (serialize !== false) builder.push({ serialize })
+  if (wcLen > 0) builder.push({ groupRedact, nestedRedact, wildcards, wcLen })
+  return Object.assign(...builder)
+}
+
+
+/***/ }),
+
+/***/ 4174:
+/***/ ((module, __unused_webpack_exports, __webpack_require__) => {
+
+"use strict";
+
+
+const { createContext, runInContext } = __webpack_require__(2184)
+
+module.exports = validator
+
+function validator (opts = {}) {
+  const {
+    ERR_PATHS_MUST_BE_STRINGS = () => 'fast-redact - Paths must be (non-empty) strings',
+    ERR_INVALID_PATH = (s) => `fast-redact – Invalid path (${s})`
+  } = opts
+
+  return function validate ({ paths }) {
+    paths.forEach((s) => {
+      if (typeof s !== 'string') {
+        throw Error(ERR_PATHS_MUST_BE_STRINGS())
+      }
+      try {
+        if (/〇/.test(s)) throw Error()
+        const proxy = new Proxy({}, { get: () => proxy, set: () => { throw Error() } })
+        const expr = (s[0] === '[' ? '' : '.') + s.replace(/^\*/, '〇').replace(/\.\*/g, '.〇').replace(/\[\*\]/g, '[〇]')
+        if (/\n|\r|;/.test(expr)) throw Error()
+        if (/\/\*/.test(expr)) throw Error()
+        runInContext(`
+          (function () {
+            'use strict'
+            o${expr}
+            if ([o${expr}].length !== 1) throw Error()
+          })()
+        `, createContext({ o: proxy, 〇: null }), {
+          codeGeneration: { strings: false, wasm: false }
+        })
+      } catch (e) {
+        throw Error(ERR_INVALID_PATH(s))
+      }
+    })
+  }
+}
+
+
+/***/ }),
+
+/***/ 7676:
+/***/ ((module) => {
+
+module.exports = stringify
+stringify.default = stringify
+stringify.stable = deterministicStringify
+stringify.stableStringify = deterministicStringify
+
+var arr = []
+var replacerStack = []
+
+// Regular stringify
+function stringify (obj, replacer, spacer) {
+  decirc(obj, '', [], undefined)
+  var res
+  if (replacerStack.length === 0) {
+    res = JSON.stringify(obj, replacer, spacer)
+  } else {
+    res = JSON.stringify(obj, replaceGetterValues(replacer), spacer)
+  }
+  while (arr.length !== 0) {
+    var part = arr.pop()
+    if (part.length === 4) {
+      Object.defineProperty(part[0], part[1], part[3])
+    } else {
+      part[0][part[1]] = part[2]
+    }
+  }
+  return res
+}
+function decirc (val, k, stack, parent) {
+  var i
+  if (typeof val === 'object' && val !== null) {
+    for (i = 0; i < stack.length; i++) {
+      if (stack[i] === val) {
+        var propertyDescriptor = Object.getOwnPropertyDescriptor(parent, k)
+        if (propertyDescriptor.get !== undefined) {
+          if (propertyDescriptor.configurable) {
+            Object.defineProperty(parent, k, { value: '[Circular]' })
+            arr.push([parent, k, val, propertyDescriptor])
+          } else {
+            replacerStack.push([val, k])
+          }
+        } else {
+          parent[k] = '[Circular]'
+          arr.push([parent, k, val])
+        }
+        return
+      }
+    }
+    stack.push(val)
+    // Optimize for Arrays. Big arrays could kill the performance otherwise!
+    if (Array.isArray(val)) {
+      for (i = 0; i < val.length; i++) {
+        decirc(val[i], i, stack, val)
+      }
+    } else {
+      var keys = Object.keys(val)
+      for (i = 0; i < keys.length; i++) {
+        var key = keys[i]
+        decirc(val[key], key, stack, val)
+      }
+    }
+    stack.pop()
+  }
+}
+
+// Stable-stringify
+function compareFunction (a, b) {
+  if (a < b) {
+    return -1
+  }
+  if (a > b) {
+    return 1
+  }
+  return 0
+}
+
+function deterministicStringify (obj, replacer, spacer) {
+  var tmp = deterministicDecirc(obj, '', [], undefined) || obj
+  var res
+  if (replacerStack.length === 0) {
+    res = JSON.stringify(tmp, replacer, spacer)
+  } else {
+    res = JSON.stringify(tmp, replaceGetterValues(replacer), spacer)
+  }
+  while (arr.length !== 0) {
+    var part = arr.pop()
+    if (part.length === 4) {
+      Object.defineProperty(part[0], part[1], part[3])
+    } else {
+      part[0][part[1]] = part[2]
+    }
+  }
+  return res
+}
+
+function deterministicDecirc (val, k, stack, parent) {
+  var i
+  if (typeof val === 'object' && val !== null) {
+    for (i = 0; i < stack.length; i++) {
+      if (stack[i] === val) {
+        var propertyDescriptor = Object.getOwnPropertyDescriptor(parent, k)
+        if (propertyDescriptor.get !== undefined) {
+          if (propertyDescriptor.configurable) {
+            Object.defineProperty(parent, k, { value: '[Circular]' })
+            arr.push([parent, k, val, propertyDescriptor])
+          } else {
+            replacerStack.push([val, k])
+          }
+        } else {
+          parent[k] = '[Circular]'
+          arr.push([parent, k, val])
+        }
+        return
+      }
+    }
+    if (typeof val.toJSON === 'function') {
+      return
+    }
+    stack.push(val)
+    // Optimize for Arrays. Big arrays could kill the performance otherwise!
+    if (Array.isArray(val)) {
+      for (i = 0; i < val.length; i++) {
+        deterministicDecirc(val[i], i, stack, val)
+      }
+    } else {
+      // Create a temporary object in the required way
+      var tmp = {}
+      var keys = Object.keys(val).sort(compareFunction)
+      for (i = 0; i < keys.length; i++) {
+        var key = keys[i]
+        deterministicDecirc(val[key], key, stack, val)
+        tmp[key] = val[key]
+      }
+      if (parent !== undefined) {
+        arr.push([parent, k, val])
+        parent[k] = tmp
+      } else {
+        return tmp
+      }
+    }
+    stack.pop()
+  }
+}
+
+// wraps replacer function to handle values we couldn't replace
+// and mark them as [Circular]
+function replaceGetterValues (replacer) {
+  replacer = replacer !== undefined ? replacer : function (k, v) { return v }
+  return function (key, val) {
+    if (replacerStack.length > 0) {
+      for (var i = 0; i < replacerStack.length; i++) {
+        var part = replacerStack[i]
+        if (part[1] === key && part[0] === val) {
+          val = '[Circular]'
+          replacerStack.splice(i, 1)
+          break
+        }
+      }
+    }
+    return replacer.call(this, key, val)
+  }
+}
+
+
+/***/ }),
+
+/***/ 5298:
+/***/ ((module) => {
+
+"use strict";
+
+
+// You may be tempted to copy and paste this, 
+// but take a look at the commit history first,
+// this is a moving target so relying on the module
+// is the best way to make sure the optimization
+// method is kept up to date and compatible with
+// every Node version.
+
+function flatstr (s) {
+  s | 0
+  return s
+}
+
+module.exports = flatstr
+
+/***/ }),
+
 /***/ 467:
 /***/ ((module, exports, __webpack_require__) => {
 
@@ -3975,11 +3601,11 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 
 function _interopDefault (ex) { return (ex && (typeof ex === 'object') && 'default' in ex) ? ex['default'] : ex; }
 
-var Stream = _interopDefault(__webpack_require__(413));
-var http = _interopDefault(__webpack_require__(605));
-var Url = _interopDefault(__webpack_require__(835));
-var https = _interopDefault(__webpack_require__(211));
-var zlib = _interopDefault(__webpack_require__(761));
+var Stream = _interopDefault(__webpack_require__(2413));
+var http = _interopDefault(__webpack_require__(8605));
+var Url = _interopDefault(__webpack_require__(8835));
+var https = _interopDefault(__webpack_require__(7211));
+var zlib = _interopDefault(__webpack_require__(8761));
 
 // Based on https://github.com/tmpvar/jsdom/blob/aa85b2abf07766ff7bf5c1f6daafb3726f2f2db5/lib/jsdom/living/blob.js
 
@@ -4130,7 +3756,7 @@ FetchError.prototype.name = 'FetchError';
 
 let convert;
 try {
-	convert = __webpack_require__(877).convert;
+	convert = __webpack_require__(2877).convert;
 } catch (e) {}
 
 const INTERNALS = Symbol('Body internals');
@@ -5622,10 +5248,10 @@ exports.FetchError = FetchError;
 
 /***/ }),
 
-/***/ 223:
+/***/ 1223:
 /***/ ((module, __unused_webpack_exports, __webpack_require__) => {
 
-var wrappy = __webpack_require__(940)
+var wrappy = __webpack_require__(2940)
 module.exports = wrappy(once)
 module.exports.strict = wrappy(onceStrict)
 
@@ -5671,287 +5297,2074 @@ function onceStrict (fn) {
 
 /***/ }),
 
-/***/ 294:
+/***/ 2571:
 /***/ ((module, __unused_webpack_exports, __webpack_require__) => {
-
-module.exports = __webpack_require__(219);
-
-
-/***/ }),
-
-/***/ 219:
-/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
 
 
-var net = __webpack_require__(631);
-var tls = __webpack_require__(16);
-var http = __webpack_require__(605);
-var https = __webpack_require__(211);
-var events = __webpack_require__(614);
-var assert = __webpack_require__(357);
-var util = __webpack_require__(669);
+const errSerializer = __webpack_require__(6522)
+const reqSerializers = __webpack_require__(5492)
+const resSerializers = __webpack_require__(9048)
 
+module.exports = {
+  err: errSerializer,
+  mapHttpRequest: reqSerializers.mapHttpRequest,
+  mapHttpResponse: resSerializers.mapHttpResponse,
+  req: reqSerializers.reqSerializer,
+  res: resSerializers.resSerializer,
 
-exports.httpOverHttp = httpOverHttp;
-exports.httpsOverHttp = httpsOverHttp;
-exports.httpOverHttps = httpOverHttps;
-exports.httpsOverHttps = httpsOverHttps;
-
-
-function httpOverHttp(options) {
-  var agent = new TunnelingAgent(options);
-  agent.request = http.request;
-  return agent;
-}
-
-function httpsOverHttp(options) {
-  var agent = new TunnelingAgent(options);
-  agent.request = http.request;
-  agent.createSocket = createSecureSocket;
-  agent.defaultPort = 443;
-  return agent;
-}
-
-function httpOverHttps(options) {
-  var agent = new TunnelingAgent(options);
-  agent.request = https.request;
-  return agent;
-}
-
-function httpsOverHttps(options) {
-  var agent = new TunnelingAgent(options);
-  agent.request = https.request;
-  agent.createSocket = createSecureSocket;
-  agent.defaultPort = 443;
-  return agent;
-}
-
-
-function TunnelingAgent(options) {
-  var self = this;
-  self.options = options || {};
-  self.proxyOptions = self.options.proxy || {};
-  self.maxSockets = self.options.maxSockets || http.Agent.defaultMaxSockets;
-  self.requests = [];
-  self.sockets = [];
-
-  self.on('free', function onFree(socket, host, port, localAddress) {
-    var options = toOptions(host, port, localAddress);
-    for (var i = 0, len = self.requests.length; i < len; ++i) {
-      var pending = self.requests[i];
-      if (pending.host === options.host && pending.port === options.port) {
-        // Detect the request to connect same origin server,
-        // reuse the connection.
-        self.requests.splice(i, 1);
-        pending.request.onSocket(socket);
-        return;
-      }
+  wrapErrorSerializer: function wrapErrorSerializer (customSerializer) {
+    if (customSerializer === errSerializer) return customSerializer
+    return function wrapErrSerializer (err) {
+      return customSerializer(errSerializer(err))
     }
-    socket.destroy();
-    self.removeSocket(socket);
-  });
-}
-util.inherits(TunnelingAgent, events.EventEmitter);
+  },
 
-TunnelingAgent.prototype.addRequest = function addRequest(req, host, port, localAddress) {
-  var self = this;
-  var options = mergeOptions({request: req}, self.options, toOptions(host, port, localAddress));
-
-  if (self.sockets.length >= this.maxSockets) {
-    // We are over limit so we'll add it to the queue.
-    self.requests.push(options);
-    return;
-  }
-
-  // If we are under maxSockets create a new one.
-  self.createSocket(options, function(socket) {
-    socket.on('free', onFree);
-    socket.on('close', onCloseOrRemove);
-    socket.on('agentRemove', onCloseOrRemove);
-    req.onSocket(socket);
-
-    function onFree() {
-      self.emit('free', socket, options);
+  wrapRequestSerializer: function wrapRequestSerializer (customSerializer) {
+    if (customSerializer === reqSerializers.reqSerializer) return customSerializer
+    return function wrappedReqSerializer (req) {
+      return customSerializer(reqSerializers.reqSerializer(req))
     }
+  },
 
-    function onCloseOrRemove(err) {
-      self.removeSocket(socket);
-      socket.removeListener('free', onFree);
-      socket.removeListener('close', onCloseOrRemove);
-      socket.removeListener('agentRemove', onCloseOrRemove);
-    }
-  });
-};
-
-TunnelingAgent.prototype.createSocket = function createSocket(options, cb) {
-  var self = this;
-  var placeholder = {};
-  self.sockets.push(placeholder);
-
-  var connectOptions = mergeOptions({}, self.proxyOptions, {
-    method: 'CONNECT',
-    path: options.host + ':' + options.port,
-    agent: false,
-    headers: {
-      host: options.host + ':' + options.port
-    }
-  });
-  if (options.localAddress) {
-    connectOptions.localAddress = options.localAddress;
-  }
-  if (connectOptions.proxyAuth) {
-    connectOptions.headers = connectOptions.headers || {};
-    connectOptions.headers['Proxy-Authorization'] = 'Basic ' +
-        new Buffer(connectOptions.proxyAuth).toString('base64');
-  }
-
-  debug('making CONNECT request');
-  var connectReq = self.request(connectOptions);
-  connectReq.useChunkedEncodingByDefault = false; // for v0.6
-  connectReq.once('response', onResponse); // for v0.6
-  connectReq.once('upgrade', onUpgrade);   // for v0.6
-  connectReq.once('connect', onConnect);   // for v0.7 or later
-  connectReq.once('error', onError);
-  connectReq.end();
-
-  function onResponse(res) {
-    // Very hacky. This is necessary to avoid http-parser leaks.
-    res.upgrade = true;
-  }
-
-  function onUpgrade(res, socket, head) {
-    // Hacky.
-    process.nextTick(function() {
-      onConnect(res, socket, head);
-    });
-  }
-
-  function onConnect(res, socket, head) {
-    connectReq.removeAllListeners();
-    socket.removeAllListeners();
-
-    if (res.statusCode !== 200) {
-      debug('tunneling socket could not be established, statusCode=%d',
-        res.statusCode);
-      socket.destroy();
-      var error = new Error('tunneling socket could not be established, ' +
-        'statusCode=' + res.statusCode);
-      error.code = 'ECONNRESET';
-      options.request.emit('error', error);
-      self.removeSocket(placeholder);
-      return;
-    }
-    if (head.length > 0) {
-      debug('got illegal response body from proxy');
-      socket.destroy();
-      var error = new Error('got illegal response body from proxy');
-      error.code = 'ECONNRESET';
-      options.request.emit('error', error);
-      self.removeSocket(placeholder);
-      return;
-    }
-    debug('tunneling connection has established');
-    self.sockets[self.sockets.indexOf(placeholder)] = socket;
-    return cb(socket);
-  }
-
-  function onError(cause) {
-    connectReq.removeAllListeners();
-
-    debug('tunneling socket could not be established, cause=%s\n',
-          cause.message, cause.stack);
-    var error = new Error('tunneling socket could not be established, ' +
-                          'cause=' + cause.message);
-    error.code = 'ECONNRESET';
-    options.request.emit('error', error);
-    self.removeSocket(placeholder);
-  }
-};
-
-TunnelingAgent.prototype.removeSocket = function removeSocket(socket) {
-  var pos = this.sockets.indexOf(socket)
-  if (pos === -1) {
-    return;
-  }
-  this.sockets.splice(pos, 1);
-
-  var pending = this.requests.shift();
-  if (pending) {
-    // If we have pending requests and a socket gets closed a new one
-    // needs to be created to take over in the pool for the one that closed.
-    this.createSocket(pending, function(socket) {
-      pending.request.onSocket(socket);
-    });
-  }
-};
-
-function createSecureSocket(options, cb) {
-  var self = this;
-  TunnelingAgent.prototype.createSocket.call(self, options, function(socket) {
-    var hostHeader = options.request.getHeader('host');
-    var tlsOptions = mergeOptions({}, self.options, {
-      socket: socket,
-      servername: hostHeader ? hostHeader.replace(/:.*$/, '') : options.host
-    });
-
-    // 0 is dummy port for v0.6
-    var secureSocket = tls.connect(0, tlsOptions);
-    self.sockets[self.sockets.indexOf(socket)] = secureSocket;
-    cb(secureSocket);
-  });
-}
-
-
-function toOptions(host, port, localAddress) {
-  if (typeof host === 'string') { // since v0.10
-    return {
-      host: host,
-      port: port,
-      localAddress: localAddress
-    };
-  }
-  return host; // for v0.11 or later
-}
-
-function mergeOptions(target) {
-  for (var i = 1, len = arguments.length; i < len; ++i) {
-    var overrides = arguments[i];
-    if (typeof overrides === 'object') {
-      var keys = Object.keys(overrides);
-      for (var j = 0, keyLen = keys.length; j < keyLen; ++j) {
-        var k = keys[j];
-        if (overrides[k] !== undefined) {
-          target[k] = overrides[k];
-        }
-      }
+  wrapResponseSerializer: function wrapResponseSerializer (customSerializer) {
+    if (customSerializer === resSerializers.resSerializer) return customSerializer
+    return function wrappedResSerializer (res) {
+      return customSerializer(resSerializers.resSerializer(res))
     }
   }
-  return target;
 }
-
-
-var debug;
-if (process.env.NODE_DEBUG && /\btunnel\b/.test(process.env.NODE_DEBUG)) {
-  debug = function() {
-    var args = Array.prototype.slice.call(arguments);
-    if (typeof args[0] === 'string') {
-      args[0] = 'TUNNEL: ' + args[0];
-    } else {
-      args.unshift('TUNNEL:');
-    }
-    console.error.apply(console, args);
-  }
-} else {
-  debug = function() {};
-}
-exports.debug = debug; // for test
 
 
 /***/ }),
 
-/***/ 429:
+/***/ 6522:
+/***/ ((module) => {
+
+"use strict";
+
+
+module.exports = errSerializer
+
+const { toString } = Object.prototype
+const seen = Symbol('circular-ref-tag')
+const rawSymbol = Symbol('pino-raw-err-ref')
+const pinoErrProto = Object.create({}, {
+  type: {
+    enumerable: true,
+    writable: true,
+    value: undefined
+  },
+  message: {
+    enumerable: true,
+    writable: true,
+    value: undefined
+  },
+  stack: {
+    enumerable: true,
+    writable: true,
+    value: undefined
+  },
+  raw: {
+    enumerable: false,
+    get: function () {
+      return this[rawSymbol]
+    },
+    set: function (val) {
+      this[rawSymbol] = val
+    }
+  }
+})
+Object.defineProperty(pinoErrProto, rawSymbol, {
+  writable: true,
+  value: {}
+})
+
+function errSerializer (err) {
+  if (!(err instanceof Error)) {
+    return err
+  }
+
+  err[seen] = undefined // tag to prevent re-looking at this
+  const _err = Object.create(pinoErrProto)
+  _err.type = toString.call(err.constructor) === '[object Function]'
+    ? err.constructor.name
+    : err.name
+  _err.message = err.message
+  _err.stack = err.stack
+  for (const key in err) {
+    if (_err[key] === undefined) {
+      const val = err[key]
+      if (val instanceof Error) {
+        /* eslint-disable no-prototype-builtins */
+        if (!val.hasOwnProperty(seen)) {
+          _err[key] = errSerializer(val)
+        }
+      } else {
+        _err[key] = val
+      }
+    }
+  }
+
+  delete err[seen] // clean up tag in case err is serialized again later
+  _err.raw = err
+  return _err
+}
+
+
+/***/ }),
+
+/***/ 5492:
+/***/ ((module) => {
+
+"use strict";
+
+
+module.exports = {
+  mapHttpRequest,
+  reqSerializer
+}
+
+const rawSymbol = Symbol('pino-raw-req-ref')
+const pinoReqProto = Object.create({}, {
+  id: {
+    enumerable: true,
+    writable: true,
+    value: ''
+  },
+  method: {
+    enumerable: true,
+    writable: true,
+    value: ''
+  },
+  url: {
+    enumerable: true,
+    writable: true,
+    value: ''
+  },
+  query: {
+    enumerable: true,
+    writable: true,
+    value: ''
+  },
+  params: {
+    enumerable: true,
+    writable: true,
+    value: ''
+  },
+  headers: {
+    enumerable: true,
+    writable: true,
+    value: {}
+  },
+  remoteAddress: {
+    enumerable: true,
+    writable: true,
+    value: ''
+  },
+  remotePort: {
+    enumerable: true,
+    writable: true,
+    value: ''
+  },
+  raw: {
+    enumerable: false,
+    get: function () {
+      return this[rawSymbol]
+    },
+    set: function (val) {
+      this[rawSymbol] = val
+    }
+  }
+})
+Object.defineProperty(pinoReqProto, rawSymbol, {
+  writable: true,
+  value: {}
+})
+
+function reqSerializer (req) {
+  // req.info is for hapi compat.
+  const connection = req.info || req.socket
+  const _req = Object.create(pinoReqProto)
+  _req.id = (typeof req.id === 'function' ? req.id() : (req.id || (req.info ? req.info.id : undefined)))
+  _req.method = req.method
+  // req.originalUrl is for expressjs compat.
+  if (req.originalUrl) {
+    _req.url = req.originalUrl
+    _req.query = req.query
+    _req.params = req.params
+  } else {
+    // req.url.path is  for hapi compat.
+    _req.url = req.path || (req.url ? (req.url.path || req.url) : undefined)
+  }
+  _req.headers = req.headers
+  _req.remoteAddress = connection && connection.remoteAddress
+  _req.remotePort = connection && connection.remotePort
+  // req.raw is  for hapi compat/equivalence
+  _req.raw = req.raw || req
+  return _req
+}
+
+function mapHttpRequest (req) {
+  return {
+    req: reqSerializer(req)
+  }
+}
+
+
+/***/ }),
+
+/***/ 9048:
+/***/ ((module) => {
+
+"use strict";
+
+
+module.exports = {
+  mapHttpResponse,
+  resSerializer
+}
+
+const rawSymbol = Symbol('pino-raw-res-ref')
+const pinoResProto = Object.create({}, {
+  statusCode: {
+    enumerable: true,
+    writable: true,
+    value: 0
+  },
+  headers: {
+    enumerable: true,
+    writable: true,
+    value: ''
+  },
+  raw: {
+    enumerable: false,
+    get: function () {
+      return this[rawSymbol]
+    },
+    set: function (val) {
+      this[rawSymbol] = val
+    }
+  }
+})
+Object.defineProperty(pinoResProto, rawSymbol, {
+  writable: true,
+  value: {}
+})
+
+function resSerializer (res) {
+  const _res = Object.create(pinoResProto)
+  _res.statusCode = res.statusCode
+  _res.headers = res.getHeaders ? res.getHeaders() : res._headers
+  _res.raw = res
+  return _res
+}
+
+function mapHttpResponse (res) {
+  return {
+    res: resSerializer(res)
+  }
+}
+
+
+/***/ }),
+
+/***/ 591:
+/***/ ((module, __unused_webpack_exports, __webpack_require__) => {
+
+"use strict";
+
+/* eslint no-prototype-builtins: 0 */
+const flatstr = __webpack_require__(5298)
+const {
+  lsCacheSym,
+  levelValSym,
+  useOnlyCustomLevelsSym,
+  streamSym,
+  formattersSym,
+  hooksSym
+} = __webpack_require__(3957)
+const { noop, genLog } = __webpack_require__(1521)
+
+const levels = {
+  trace: 10,
+  debug: 20,
+  info: 30,
+  warn: 40,
+  error: 50,
+  fatal: 60
+}
+const levelMethods = {
+  fatal: (hook) => {
+    const logFatal = genLog(levels.fatal, hook)
+    return function (...args) {
+      const stream = this[streamSym]
+      logFatal.call(this, ...args)
+      if (typeof stream.flushSync === 'function') {
+        try {
+          stream.flushSync()
+        } catch (e) {
+          // https://github.com/pinojs/pino/pull/740#discussion_r346788313
+        }
+      }
+    }
+  },
+  error: (hook) => genLog(levels.error, hook),
+  warn: (hook) => genLog(levels.warn, hook),
+  info: (hook) => genLog(levels.info, hook),
+  debug: (hook) => genLog(levels.debug, hook),
+  trace: (hook) => genLog(levels.trace, hook)
+}
+
+const nums = Object.keys(levels).reduce((o, k) => {
+  o[levels[k]] = k
+  return o
+}, {})
+
+const initialLsCache = Object.keys(nums).reduce((o, k) => {
+  o[k] = flatstr('{"level":' + Number(k))
+  return o
+}, {})
+
+function genLsCache (instance) {
+  const formatter = instance[formattersSym].level
+  const { labels } = instance.levels
+  const cache = {}
+  for (const label in labels) {
+    const level = formatter(labels[label], Number(label))
+    cache[label] = JSON.stringify(level).slice(0, -1)
+  }
+  instance[lsCacheSym] = cache
+  return instance
+}
+
+function isStandardLevel (level, useOnlyCustomLevels) {
+  if (useOnlyCustomLevels) {
+    return false
+  }
+
+  switch (level) {
+    case 'fatal':
+    case 'error':
+    case 'warn':
+    case 'info':
+    case 'debug':
+    case 'trace':
+      return true
+    default:
+      return false
+  }
+}
+
+function setLevel (level) {
+  const { labels, values } = this.levels
+  if (typeof level === 'number') {
+    if (labels[level] === undefined) throw Error('unknown level value' + level)
+    level = labels[level]
+  }
+  if (values[level] === undefined) throw Error('unknown level ' + level)
+  const preLevelVal = this[levelValSym]
+  const levelVal = this[levelValSym] = values[level]
+  const useOnlyCustomLevelsVal = this[useOnlyCustomLevelsSym]
+  const hook = this[hooksSym].logMethod
+
+  for (const key in values) {
+    if (levelVal > values[key]) {
+      this[key] = noop
+      continue
+    }
+    this[key] = isStandardLevel(key, useOnlyCustomLevelsVal) ? levelMethods[key](hook) : genLog(values[key], hook)
+  }
+
+  this.emit(
+    'level-change',
+    level,
+    levelVal,
+    labels[preLevelVal],
+    preLevelVal
+  )
+}
+
+function getLevel (level) {
+  const { levels, levelVal } = this
+  // protection against potential loss of Pino scope from serializers (edge case with circular refs - https://github.com/pinojs/pino/issues/833)
+  return (levels && levels.labels) ? levels.labels[levelVal] : ''
+}
+
+function isLevelEnabled (logLevel) {
+  const { values } = this.levels
+  const logLevelVal = values[logLevel]
+  return logLevelVal !== undefined && (logLevelVal >= this[levelValSym])
+}
+
+function mappings (customLevels = null, useOnlyCustomLevels = false) {
+  const customNums = customLevels
+    ? Object.keys(customLevels).reduce((o, k) => {
+      o[customLevels[k]] = k
+      return o
+    }, {})
+    : null
+
+  const labels = Object.assign(
+    Object.create(Object.prototype, { Infinity: { value: 'silent' } }),
+    useOnlyCustomLevels ? null : nums,
+    customNums
+  )
+  const values = Object.assign(
+    Object.create(Object.prototype, { silent: { value: Infinity } }),
+    useOnlyCustomLevels ? null : levels,
+    customLevels
+  )
+  return { labels, values }
+}
+
+function assertDefaultLevelFound (defaultLevel, customLevels, useOnlyCustomLevels) {
+  if (typeof defaultLevel === 'number') {
+    const values = [].concat(
+      Object.keys(customLevels || {}).map(key => customLevels[key]),
+      useOnlyCustomLevels ? [] : Object.keys(nums).map(level => +level),
+      Infinity
+    )
+    if (!values.includes(defaultLevel)) {
+      throw Error(`default level:${defaultLevel} must be included in custom levels`)
+    }
+    return
+  }
+
+  const labels = Object.assign(
+    Object.create(Object.prototype, { silent: { value: Infinity } }),
+    useOnlyCustomLevels ? null : levels,
+    customLevels
+  )
+  if (!(defaultLevel in labels)) {
+    throw Error(`default level:${defaultLevel} must be included in custom levels`)
+  }
+}
+
+function assertNoLevelCollisions (levels, customLevels) {
+  const { labels, values } = levels
+  for (const k in customLevels) {
+    if (k in values) {
+      throw Error('levels cannot be overridden')
+    }
+    if (customLevels[k] in labels) {
+      throw Error('pre-existing level values cannot be used for new levels')
+    }
+  }
+}
+
+module.exports = {
+  initialLsCache,
+  genLsCache,
+  levelMethods,
+  getLevel,
+  setLevel,
+  isLevelEnabled,
+  mappings,
+  assertNoLevelCollisions,
+  assertDefaultLevelFound
+}
+
+
+/***/ }),
+
+/***/ 8578:
+/***/ ((module, __unused_webpack_exports, __webpack_require__) => {
+
+"use strict";
+
+
+const { version } = __webpack_require__(8686)
+
+module.exports = { version }
+
+
+/***/ }),
+
+/***/ 6899:
+/***/ ((module, __unused_webpack_exports, __webpack_require__) => {
+
+"use strict";
+
+
+/* eslint no-prototype-builtins: 0 */
+
+const { EventEmitter } = __webpack_require__(8614)
+const SonicBoom = __webpack_require__(3460)
+const flatstr = __webpack_require__(5298)
+const {
+  lsCacheSym,
+  levelValSym,
+  setLevelSym,
+  getLevelSym,
+  chindingsSym,
+  parsedChindingsSym,
+  mixinSym,
+  asJsonSym,
+  writeSym,
+  timeSym,
+  timeSliceIndexSym,
+  streamSym,
+  serializersSym,
+  formattersSym,
+  useOnlyCustomLevelsSym,
+  needsMetadataGsym
+} = __webpack_require__(3957)
+const {
+  getLevel,
+  setLevel,
+  isLevelEnabled,
+  mappings,
+  initialLsCache,
+  genLsCache,
+  assertNoLevelCollisions
+} = __webpack_require__(591)
+const {
+  asChindings,
+  asJson,
+  buildFormatters
+} = __webpack_require__(1521)
+const {
+  version
+} = __webpack_require__(8578)
+
+// note: use of class is satirical
+// https://github.com/pinojs/pino/pull/433#pullrequestreview-127703127
+const constructor = class Pino {}
+const prototype = {
+  constructor,
+  child,
+  bindings,
+  setBindings,
+  flush,
+  isLevelEnabled,
+  version,
+  get level () { return this[getLevelSym]() },
+  set level (lvl) { this[setLevelSym](lvl) },
+  get levelVal () { return this[levelValSym] },
+  set levelVal (n) { throw Error('levelVal is read-only') },
+  [lsCacheSym]: initialLsCache,
+  [writeSym]: write,
+  [asJsonSym]: asJson,
+  [getLevelSym]: getLevel,
+  [setLevelSym]: setLevel
+}
+
+Object.setPrototypeOf(prototype, EventEmitter.prototype)
+
+// exporting and consuming the prototype object using factory pattern fixes scoping issues with getters when serializing
+module.exports = function () {
+  return Object.create(prototype)
+}
+
+const resetChildingsFormatter = bindings => bindings
+function child (bindings) {
+  if (!bindings) {
+    throw Error('missing bindings for child Pino')
+  }
+  const serializers = this[serializersSym]
+  const formatters = this[formattersSym]
+  const instance = Object.create(this)
+  if (bindings.hasOwnProperty('serializers') === true) {
+    instance[serializersSym] = Object.create(null)
+
+    for (const k in serializers) {
+      instance[serializersSym][k] = serializers[k]
+    }
+    const parentSymbols = Object.getOwnPropertySymbols(serializers)
+    /* eslint no-var: off */
+    for (var i = 0; i < parentSymbols.length; i++) {
+      const ks = parentSymbols[i]
+      instance[serializersSym][ks] = serializers[ks]
+    }
+
+    for (const bk in bindings.serializers) {
+      instance[serializersSym][bk] = bindings.serializers[bk]
+    }
+    const bindingsSymbols = Object.getOwnPropertySymbols(bindings.serializers)
+    for (var bi = 0; bi < bindingsSymbols.length; bi++) {
+      const bks = bindingsSymbols[bi]
+      instance[serializersSym][bks] = bindings.serializers[bks]
+    }
+  } else instance[serializersSym] = serializers
+  if (bindings.hasOwnProperty('formatters')) {
+    const { level, bindings: chindings, log } = bindings.formatters
+    instance[formattersSym] = buildFormatters(
+      level || formatters.level,
+      chindings || resetChildingsFormatter,
+      log || formatters.log
+    )
+  } else {
+    instance[formattersSym] = buildFormatters(
+      formatters.level,
+      resetChildingsFormatter,
+      formatters.log
+    )
+  }
+  if (bindings.hasOwnProperty('customLevels') === true) {
+    assertNoLevelCollisions(this.levels, bindings.customLevels)
+    instance.levels = mappings(bindings.customLevels, instance[useOnlyCustomLevelsSym])
+    genLsCache(instance)
+  }
+  instance[chindingsSym] = asChindings(instance, bindings)
+  const childLevel = bindings.level || this.level
+  instance[setLevelSym](childLevel)
+
+  return instance
+}
+
+function bindings () {
+  const chindings = this[chindingsSym]
+  const chindingsJson = `{${chindings.substr(1)}}` // at least contains ,"pid":7068,"hostname":"myMac"
+  const bindingsFromJson = JSON.parse(chindingsJson)
+  delete bindingsFromJson.pid
+  delete bindingsFromJson.hostname
+  return bindingsFromJson
+}
+
+function setBindings (newBindings) {
+  const chindings = asChindings(this, newBindings)
+  this[chindingsSym] = chindings
+  delete this[parsedChindingsSym]
+}
+
+function write (_obj, msg, num) {
+  const t = this[timeSym]()
+  const mixin = this[mixinSym]
+  const objError = _obj instanceof Error
+  let obj
+
+  if (_obj === undefined || _obj === null) {
+    obj = mixin ? mixin({}) : {}
+  } else {
+    obj = Object.assign(mixin ? mixin(_obj) : {}, _obj)
+    if (!msg && objError) {
+      msg = _obj.message
+    }
+
+    if (objError) {
+      obj.stack = _obj.stack
+      if (!obj.type) {
+        obj.type = 'Error'
+      }
+    }
+  }
+
+  const s = this[asJsonSym](obj, msg, num, t)
+
+  const stream = this[streamSym]
+  if (stream[needsMetadataGsym] === true) {
+    stream.lastLevel = num
+    stream.lastObj = obj
+    stream.lastMsg = msg
+    stream.lastTime = t.slice(this[timeSliceIndexSym])
+    stream.lastLogger = this // for child loggers
+  }
+  if (stream instanceof SonicBoom) stream.write(s)
+  else stream.write(flatstr(s))
+}
+
+function flush () {
+  const stream = this[streamSym]
+  if ('flush' in stream) stream.flush()
+}
+
+
+/***/ }),
+
+/***/ 4219:
+/***/ ((module, __unused_webpack_exports, __webpack_require__) => {
+
+"use strict";
+
+
+const fastRedact = __webpack_require__(4826)
+const { redactFmtSym, wildcardFirstSym } = __webpack_require__(3957)
+const { rx, validator } = fastRedact
+
+const validate = validator({
+  ERR_PATHS_MUST_BE_STRINGS: () => 'pino – redacted paths must be strings',
+  ERR_INVALID_PATH: (s) => `pino – redact paths array contains an invalid path (${s})`
+})
+
+const CENSOR = '[Redacted]'
+const strict = false // TODO should this be configurable?
+
+function redaction (opts, serialize) {
+  const { paths, censor } = handle(opts)
+
+  const shape = paths.reduce((o, str) => {
+    rx.lastIndex = 0
+    const first = rx.exec(str)
+    const next = rx.exec(str)
+
+    // ns is the top-level path segment, brackets + quoting removed.
+    let ns = first[1] !== undefined
+      ? first[1].replace(/^(?:"|'|`)(.*)(?:"|'|`)$/, '$1')
+      : first[0]
+
+    if (ns === '*') {
+      ns = wildcardFirstSym
+    }
+
+    // top level key:
+    if (next === null) {
+      o[ns] = null
+      return o
+    }
+
+    // path with at least two segments:
+    // if ns is already redacted at the top level, ignore lower level redactions
+    if (o[ns] === null) {
+      return o
+    }
+
+    const { index } = next
+    const nextPath = `${str.substr(index, str.length - 1)}`
+
+    o[ns] = o[ns] || []
+
+    // shape is a mix of paths beginning with literal values and wildcard
+    // paths [ "a.b.c", "*.b.z" ] should reduce to a shape of
+    // { "a": [ "b.c", "b.z" ], *: [ "b.z" ] }
+    // note: "b.z" is in both "a" and * arrays because "a" matches the wildcard.
+    // (* entry has wildcardFirstSym as key)
+    if (ns !== wildcardFirstSym && o[ns].length === 0) {
+      // first time ns's get all '*' redactions so far
+      o[ns].push(...(o[wildcardFirstSym] || []))
+    }
+
+    if (ns === wildcardFirstSym) {
+      // new * path gets added to all previously registered literal ns's.
+      Object.keys(o).forEach(function (k) {
+        if (o[k]) {
+          o[k].push(nextPath)
+        }
+      })
+    }
+
+    o[ns].push(nextPath)
+    return o
+  }, {})
+
+  // the redactor assigned to the format symbol key
+  // provides top level redaction for instances where
+  // an object is interpolated into the msg string
+  const result = {
+    [redactFmtSym]: fastRedact({ paths, censor, serialize, strict })
+  }
+
+  const topCensor = (...args) => {
+    return typeof censor === 'function' ? serialize(censor(...args)) : serialize(censor)
+  }
+
+  return [...Object.keys(shape), ...Object.getOwnPropertySymbols(shape)].reduce((o, k) => {
+    // top level key:
+    if (shape[k] === null) {
+      o[k] = (value) => topCensor(value, [k])
+    } else {
+      const wrappedCensor = typeof censor === 'function'
+        ? (value, path) => {
+            return censor(value, [k, ...path])
+          }
+        : censor
+      o[k] = fastRedact({
+        paths: shape[k],
+        censor: wrappedCensor,
+        serialize,
+        strict
+      })
+    }
+    return o
+  }, result)
+}
+
+function handle (opts) {
+  if (Array.isArray(opts)) {
+    opts = { paths: opts, censor: CENSOR }
+    validate(opts)
+    return opts
+  }
+  let { paths, censor = CENSOR, remove } = opts
+  if (Array.isArray(paths) === false) { throw Error('pino – redact must contain an array of strings') }
+  if (remove === true) censor = undefined
+  validate({ paths, censor })
+
+  return { paths, censor }
+}
+
+module.exports = redaction
+
+
+/***/ }),
+
+/***/ 3957:
+/***/ ((module) => {
+
+"use strict";
+
+
+const setLevelSym = Symbol('pino.setLevel')
+const getLevelSym = Symbol('pino.getLevel')
+const levelValSym = Symbol('pino.levelVal')
+const useLevelLabelsSym = Symbol('pino.useLevelLabels')
+const useOnlyCustomLevelsSym = Symbol('pino.useOnlyCustomLevels')
+const mixinSym = Symbol('pino.mixin')
+
+const lsCacheSym = Symbol('pino.lsCache')
+const chindingsSym = Symbol('pino.chindings')
+const parsedChindingsSym = Symbol('pino.parsedChindings')
+
+const asJsonSym = Symbol('pino.asJson')
+const writeSym = Symbol('pino.write')
+const redactFmtSym = Symbol('pino.redactFmt')
+
+const timeSym = Symbol('pino.time')
+const timeSliceIndexSym = Symbol('pino.timeSliceIndex')
+const streamSym = Symbol('pino.stream')
+const stringifySym = Symbol('pino.stringify')
+const stringifiersSym = Symbol('pino.stringifiers')
+const endSym = Symbol('pino.end')
+const formatOptsSym = Symbol('pino.formatOpts')
+const messageKeySym = Symbol('pino.messageKey')
+const nestedKeySym = Symbol('pino.nestedKey')
+
+const wildcardFirstSym = Symbol('pino.wildcardFirst')
+
+// public symbols, no need to use the same pino
+// version for these
+const serializersSym = Symbol.for('pino.serializers')
+const formattersSym = Symbol.for('pino.formatters')
+const hooksSym = Symbol.for('pino.hooks')
+const needsMetadataGsym = Symbol.for('pino.metadata')
+
+module.exports = {
+  setLevelSym,
+  getLevelSym,
+  levelValSym,
+  useLevelLabelsSym,
+  mixinSym,
+  lsCacheSym,
+  chindingsSym,
+  parsedChindingsSym,
+  asJsonSym,
+  writeSym,
+  serializersSym,
+  redactFmtSym,
+  timeSym,
+  timeSliceIndexSym,
+  streamSym,
+  stringifySym,
+  stringifiersSym,
+  endSym,
+  formatOptsSym,
+  messageKeySym,
+  nestedKeySym,
+  wildcardFirstSym,
+  needsMetadataGsym,
+  useOnlyCustomLevelsSym,
+  formattersSym,
+  hooksSym
+}
+
+
+/***/ }),
+
+/***/ 1866:
+/***/ ((module) => {
+
+"use strict";
+
+
+const nullTime = () => ''
+
+const epochTime = () => `,"time":${Date.now()}`
+
+const unixTime = () => `,"time":${Math.round(Date.now() / 1000.0)}`
+
+const isoTime = () => `,"time":"${new Date(Date.now()).toISOString()}"` // using Date.now() for testability
+
+module.exports = { nullTime, epochTime, unixTime, isoTime }
+
+
+/***/ }),
+
+/***/ 1521:
+/***/ ((module, __unused_webpack_exports, __webpack_require__) => {
+
+"use strict";
+
+
+/* eslint no-prototype-builtins: 0 */
+
+const format = __webpack_require__(5933)
+const { mapHttpRequest, mapHttpResponse } = __webpack_require__(2571)
+const SonicBoom = __webpack_require__(3460)
+const stringifySafe = __webpack_require__(7676)
+const {
+  lsCacheSym,
+  chindingsSym,
+  parsedChindingsSym,
+  writeSym,
+  serializersSym,
+  formatOptsSym,
+  endSym,
+  stringifiersSym,
+  stringifySym,
+  wildcardFirstSym,
+  needsMetadataGsym,
+  redactFmtSym,
+  streamSym,
+  nestedKeySym,
+  formattersSym,
+  messageKeySym
+} = __webpack_require__(3957)
+
+function noop () {}
+
+function genLog (level, hook) {
+  if (!hook) return LOG
+
+  return function hookWrappedLog (...args) {
+    hook.call(this, args, LOG, level)
+  }
+
+  function LOG (o, ...n) {
+    if (typeof o === 'object') {
+      let msg = o
+      if (o !== null) {
+        if (o.method && o.headers && o.socket) {
+          o = mapHttpRequest(o)
+        } else if (typeof o.setHeader === 'function') {
+          o = mapHttpResponse(o)
+        }
+      }
+      if (this[nestedKeySym]) o = { [this[nestedKeySym]]: o }
+      let formatParams
+      if (msg === null && n.length === 0) {
+        formatParams = [null]
+      } else {
+        msg = n.shift()
+        formatParams = n
+      }
+      this[writeSym](o, format(msg, formatParams, this[formatOptsSym]), level)
+    } else {
+      this[writeSym](null, format(o, n, this[formatOptsSym]), level)
+    }
+  }
+}
+
+// magically escape strings for json
+// relying on their charCodeAt
+// everything below 32 needs JSON.stringify()
+// 34 and 92 happens all the time, so we
+// have a fast case for them
+function asString (str) {
+  let result = ''
+  let last = 0
+  let found = false
+  let point = 255
+  const l = str.length
+  if (l > 100) {
+    return JSON.stringify(str)
+  }
+  for (var i = 0; i < l && point >= 32; i++) {
+    point = str.charCodeAt(i)
+    if (point === 34 || point === 92) {
+      result += str.slice(last, i) + '\\'
+      last = i
+      found = true
+    }
+  }
+  if (!found) {
+    result = str
+  } else {
+    result += str.slice(last)
+  }
+  return point < 32 ? JSON.stringify(str) : '"' + result + '"'
+}
+
+function asJson (obj, msg, num, time) {
+  const stringify = this[stringifySym]
+  const stringifiers = this[stringifiersSym]
+  const end = this[endSym]
+  const chindings = this[chindingsSym]
+  const serializers = this[serializersSym]
+  const formatters = this[formattersSym]
+  const messageKey = this[messageKeySym]
+  let data = this[lsCacheSym][num] + time
+
+  // we need the child bindings added to the output first so instance logged
+  // objects can take precedence when JSON.parse-ing the resulting log line
+  data = data + chindings
+
+  let value
+  const notHasOwnProperty = obj.hasOwnProperty === undefined
+  if (formatters.log) {
+    obj = formatters.log(obj)
+  }
+  if (msg !== undefined) {
+    obj[messageKey] = msg
+  }
+  const wildcardStringifier = stringifiers[wildcardFirstSym]
+  for (const key in obj) {
+    value = obj[key]
+    if ((notHasOwnProperty || obj.hasOwnProperty(key)) && value !== undefined) {
+      value = serializers[key] ? serializers[key](value) : value
+
+      const stringifier = stringifiers[key] || wildcardStringifier
+
+      switch (typeof value) {
+        case 'undefined':
+        case 'function':
+          continue
+        case 'number':
+          /* eslint no-fallthrough: "off" */
+          if (Number.isFinite(value) === false) {
+            value = null
+          }
+        // this case explicitly falls through to the next one
+        case 'boolean':
+          if (stringifier) value = stringifier(value)
+          break
+        case 'string':
+          value = (stringifier || asString)(value)
+          break
+        default:
+          value = (stringifier || stringify)(value)
+      }
+      if (value === undefined) continue
+      data += ',"' + key + '":' + value
+    }
+  }
+
+  return data + end
+}
+
+function asChindings (instance, bindings) {
+  let value
+  let data = instance[chindingsSym]
+  const stringify = instance[stringifySym]
+  const stringifiers = instance[stringifiersSym]
+  const wildcardStringifier = stringifiers[wildcardFirstSym]
+  const serializers = instance[serializersSym]
+  const formatter = instance[formattersSym].bindings
+  bindings = formatter(bindings)
+
+  for (const key in bindings) {
+    value = bindings[key]
+    const valid = key !== 'level' &&
+      key !== 'serializers' &&
+      key !== 'formatters' &&
+      key !== 'customLevels' &&
+      bindings.hasOwnProperty(key) &&
+      value !== undefined
+    if (valid === true) {
+      value = serializers[key] ? serializers[key](value) : value
+      value = (stringifiers[key] || wildcardStringifier || stringify)(value)
+      if (value === undefined) continue
+      data += ',"' + key + '":' + value
+    }
+  }
+  return data
+}
+
+function getPrettyStream (opts, prettifier, dest, instance) {
+  if (prettifier && typeof prettifier === 'function') {
+    prettifier = prettifier.bind(instance)
+    return prettifierMetaWrapper(prettifier(opts), dest, opts)
+  }
+  try {
+    const prettyFactory = __webpack_require__(1462)
+    prettyFactory.asMetaWrapper = prettifierMetaWrapper
+    return prettifierMetaWrapper(prettyFactory(opts), dest, opts)
+  } catch (e) {
+    throw Error('Missing `pino-pretty` module: `pino-pretty` must be installed separately')
+  }
+}
+
+function prettifierMetaWrapper (pretty, dest, opts) {
+  opts = Object.assign({ suppressFlushSyncWarning: false }, opts)
+  let warned = false
+  return {
+    [needsMetadataGsym]: true,
+    lastLevel: 0,
+    lastMsg: null,
+    lastObj: null,
+    lastLogger: null,
+    flushSync () {
+      if (opts.suppressFlushSyncWarning || warned) {
+        return
+      }
+      warned = true
+      setMetadataProps(dest, this)
+      dest.write(pretty(Object.assign({
+        level: 40, // warn
+        msg: 'pino.final with prettyPrint does not support flushing',
+        time: Date.now()
+      }, this.chindings())))
+    },
+    chindings () {
+      const lastLogger = this.lastLogger
+      let chindings = null
+
+      // protection against flushSync being called before logging
+      // anything
+      if (!lastLogger) {
+        return null
+      }
+
+      if (lastLogger.hasOwnProperty(parsedChindingsSym)) {
+        chindings = lastLogger[parsedChindingsSym]
+      } else {
+        chindings = JSON.parse('{' + lastLogger[chindingsSym].substr(1) + '}')
+        lastLogger[parsedChindingsSym] = chindings
+      }
+
+      return chindings
+    },
+    write (chunk) {
+      const lastLogger = this.lastLogger
+      const chindings = this.chindings()
+
+      let time = this.lastTime
+
+      if (time.match(/^\d+/)) {
+        time = parseInt(time)
+      } else {
+        time = time.slice(1, -1)
+      }
+
+      const lastObj = this.lastObj
+      const lastMsg = this.lastMsg
+      const errorProps = null
+
+      const formatters = lastLogger[formattersSym]
+      const formattedObj = formatters.log ? formatters.log(lastObj) : lastObj
+
+      const messageKey = lastLogger[messageKeySym]
+      if (lastMsg && formattedObj && !formattedObj.hasOwnProperty(messageKey)) {
+        formattedObj[messageKey] = lastMsg
+      }
+
+      const obj = Object.assign({
+        level: this.lastLevel,
+        time
+      }, formattedObj, errorProps)
+
+      const serializers = lastLogger[serializersSym]
+      const keys = Object.keys(serializers)
+
+      for (var i = 0; i < keys.length; i++) {
+        const key = keys[i]
+        if (obj[key] !== undefined) {
+          obj[key] = serializers[key](obj[key])
+        }
+      }
+
+      for (const key in chindings) {
+        if (!obj.hasOwnProperty(key)) {
+          obj[key] = chindings[key]
+        }
+      }
+
+      const stringifiers = lastLogger[stringifiersSym]
+      const redact = stringifiers[redactFmtSym]
+
+      const formatted = pretty(typeof redact === 'function' ? redact(obj) : obj)
+      if (formatted === undefined) return
+
+      setMetadataProps(dest, this)
+      dest.write(formatted)
+    }
+  }
+}
+
+function hasBeenTampered (stream) {
+  return stream.write !== stream.constructor.prototype.write
+}
+
+function buildSafeSonicBoom (opts) {
+  const stream = new SonicBoom(opts)
+  stream.on('error', filterBrokenPipe)
+  return stream
+
+  function filterBrokenPipe (err) {
+    // TODO verify on Windows
+    if (err.code === 'EPIPE') {
+      // If we get EPIPE, we should stop logging here
+      // however we have no control to the consumer of
+      // SonicBoom, so we just overwrite the write method
+      stream.write = noop
+      stream.end = noop
+      stream.flushSync = noop
+      stream.destroy = noop
+      return
+    }
+    stream.removeListener('error', filterBrokenPipe)
+    stream.emit('error', err)
+  }
+}
+
+function createArgsNormalizer (defaultOptions) {
+  return function normalizeArgs (instance, opts = {}, stream) {
+    // support stream as a string
+    if (typeof opts === 'string') {
+      stream = buildSafeSonicBoom({ dest: opts, sync: true })
+      opts = {}
+    } else if (typeof stream === 'string') {
+      stream = buildSafeSonicBoom({ dest: stream, sync: true })
+    } else if (opts instanceof SonicBoom || opts.writable || opts._writableState) {
+      stream = opts
+      opts = null
+    }
+    opts = Object.assign({}, defaultOptions, opts)
+    if ('extreme' in opts) {
+      throw Error('The extreme option has been removed, use pino.destination({ sync: false }) instead')
+    }
+    if ('onTerminated' in opts) {
+      throw Error('The onTerminated option has been removed, use pino.final instead')
+    }
+    if ('changeLevelName' in opts) {
+      process.emitWarning(
+        'The changeLevelName option is deprecated and will be removed in v7. Use levelKey instead.',
+        { code: 'changeLevelName_deprecation' }
+      )
+      opts.levelKey = opts.changeLevelName
+      delete opts.changeLevelName
+    }
+    const { enabled, prettyPrint, prettifier, messageKey } = opts
+    if (enabled === false) opts.level = 'silent'
+    stream = stream || process.stdout
+    if (stream === process.stdout && stream.fd >= 0 && !hasBeenTampered(stream)) {
+      stream = buildSafeSonicBoom({ fd: stream.fd, sync: true })
+    }
+    if (prettyPrint) {
+      const prettyOpts = Object.assign({ messageKey }, prettyPrint)
+      stream = getPrettyStream(prettyOpts, prettifier, stream, instance)
+    }
+    return { opts, stream }
+  }
+}
+
+function final (logger, handler) {
+  if (typeof logger === 'undefined' || typeof logger.child !== 'function') {
+    throw Error('expected a pino logger instance')
+  }
+  const hasHandler = (typeof handler !== 'undefined')
+  if (hasHandler && typeof handler !== 'function') {
+    throw Error('if supplied, the handler parameter should be a function')
+  }
+  const stream = logger[streamSym]
+  if (typeof stream.flushSync !== 'function') {
+    throw Error('final requires a stream that has a flushSync method, such as pino.destination')
+  }
+
+  const finalLogger = new Proxy(logger, {
+    get: (logger, key) => {
+      if (key in logger.levels.values) {
+        return (...args) => {
+          logger[key](...args)
+          stream.flushSync()
+        }
+      }
+      return logger[key]
+    }
+  })
+
+  if (!hasHandler) {
+    return finalLogger
+  }
+
+  return (err = null, ...args) => {
+    try {
+      stream.flushSync()
+    } catch (e) {
+      // it's too late to wait for the stream to be ready
+      // because this is a final tick scenario.
+      // in practice there shouldn't be a situation where it isn't
+      // however, swallow the error just in case (and for easier testing)
+    }
+    return handler(err, finalLogger, ...args)
+  }
+}
+
+function stringify (obj) {
+  try {
+    return JSON.stringify(obj)
+  } catch (_) {
+    return stringifySafe(obj)
+  }
+}
+
+function buildFormatters (level, bindings, log) {
+  return {
+    level,
+    bindings,
+    log
+  }
+}
+
+function setMetadataProps (dest, that) {
+  if (dest[needsMetadataGsym] === true) {
+    dest.lastLevel = that.lastLevel
+    dest.lastMsg = that.lastMsg
+    dest.lastObj = that.lastObj
+    dest.lastTime = that.lastTime
+    dest.lastLogger = that.lastLogger
+  }
+}
+
+module.exports = {
+  noop,
+  buildSafeSonicBoom,
+  getPrettyStream,
+  asChindings,
+  asJson,
+  genLog,
+  createArgsNormalizer,
+  final,
+  stringify,
+  buildFormatters
+}
+
+
+/***/ }),
+
+/***/ 9608:
+/***/ ((module, __unused_webpack_exports, __webpack_require__) => {
+
+"use strict";
+
+/* eslint no-prototype-builtins: 0 */
+const os = __webpack_require__(2087)
+const stdSerializers = __webpack_require__(2571)
+const redaction = __webpack_require__(4219)
+const time = __webpack_require__(1866)
+const proto = __webpack_require__(6899)
+const symbols = __webpack_require__(3957)
+const { assertDefaultLevelFound, mappings, genLsCache } = __webpack_require__(591)
+const {
+  createArgsNormalizer,
+  asChindings,
+  final,
+  stringify,
+  buildSafeSonicBoom,
+  buildFormatters,
+  noop
+} = __webpack_require__(1521)
+const { version } = __webpack_require__(8578)
+const {
+  chindingsSym,
+  redactFmtSym,
+  serializersSym,
+  timeSym,
+  timeSliceIndexSym,
+  streamSym,
+  stringifySym,
+  stringifiersSym,
+  setLevelSym,
+  endSym,
+  formatOptsSym,
+  messageKeySym,
+  nestedKeySym,
+  mixinSym,
+  useOnlyCustomLevelsSym,
+  formattersSym,
+  hooksSym
+} = symbols
+const { epochTime, nullTime } = time
+const { pid } = process
+const hostname = os.hostname()
+const defaultErrorSerializer = stdSerializers.err
+const defaultOptions = {
+  level: 'info',
+  messageKey: 'msg',
+  nestedKey: null,
+  enabled: true,
+  prettyPrint: false,
+  base: { pid, hostname },
+  serializers: Object.assign(Object.create(null), {
+    err: defaultErrorSerializer
+  }),
+  formatters: Object.assign(Object.create(null), {
+    bindings (bindings) {
+      return bindings
+    },
+    level (label, number) {
+      return { level: number }
+    }
+  }),
+  hooks: {
+    logMethod: undefined
+  },
+  timestamp: epochTime,
+  name: undefined,
+  redact: null,
+  customLevels: null,
+  levelKey: undefined,
+  useOnlyCustomLevels: false
+}
+
+const normalize = createArgsNormalizer(defaultOptions)
+
+const serializers = Object.assign(Object.create(null), stdSerializers)
+
+function pino (...args) {
+  const instance = {}
+  const { opts, stream } = normalize(instance, ...args)
+  const {
+    redact,
+    crlf,
+    serializers,
+    timestamp,
+    messageKey,
+    nestedKey,
+    base,
+    name,
+    level,
+    customLevels,
+    useLevelLabels,
+    changeLevelName,
+    levelKey,
+    mixin,
+    useOnlyCustomLevels,
+    formatters,
+    hooks
+  } = opts
+
+  const allFormatters = buildFormatters(
+    formatters.level,
+    formatters.bindings,
+    formatters.log
+  )
+
+  if (useLevelLabels && !(changeLevelName || levelKey)) {
+    process.emitWarning('useLevelLabels is deprecated, use the formatters.level option instead', 'Warning', 'PINODEP001')
+    allFormatters.level = labelsFormatter
+  } else if ((changeLevelName || levelKey) && !useLevelLabels) {
+    process.emitWarning('changeLevelName and levelKey are deprecated, use the formatters.level option instead', 'Warning', 'PINODEP002')
+    allFormatters.level = levelNameFormatter(changeLevelName || levelKey)
+  } else if ((changeLevelName || levelKey) && useLevelLabels) {
+    process.emitWarning('useLevelLabels is deprecated, use the formatters.level option instead', 'Warning', 'PINODEP001')
+    process.emitWarning('changeLevelName and levelKey are deprecated, use the formatters.level option instead', 'Warning', 'PINODEP002')
+    allFormatters.level = levelNameLabelFormatter(changeLevelName || levelKey)
+  }
+
+  if (serializers[Symbol.for('pino.*')]) {
+    process.emitWarning('The pino.* serializer is deprecated, use the formatters.log options instead', 'Warning', 'PINODEP003')
+    allFormatters.log = serializers[Symbol.for('pino.*')]
+  }
+
+  if (!allFormatters.bindings) {
+    allFormatters.bindings = defaultOptions.formatters.bindings
+  }
+  if (!allFormatters.level) {
+    allFormatters.level = defaultOptions.formatters.level
+  }
+
+  const stringifiers = redact ? redaction(redact, stringify) : {}
+  const formatOpts = redact
+    ? { stringify: stringifiers[redactFmtSym] }
+    : { stringify }
+  const end = '}' + (crlf ? '\r\n' : '\n')
+  const coreChindings = asChindings.bind(null, {
+    [chindingsSym]: '',
+    [serializersSym]: serializers,
+    [stringifiersSym]: stringifiers,
+    [stringifySym]: stringify,
+    [formattersSym]: allFormatters
+  })
+
+  let chindings = ''
+  if (base !== null) {
+    if (name === undefined) {
+      chindings = coreChindings(base)
+    } else {
+      chindings = coreChindings(Object.assign({}, base, { name }))
+    }
+  }
+
+  const time = (timestamp instanceof Function)
+    ? timestamp
+    : (timestamp ? epochTime : nullTime)
+  const timeSliceIndex = time().indexOf(':') + 1
+
+  if (useOnlyCustomLevels && !customLevels) throw Error('customLevels is required if useOnlyCustomLevels is set true')
+  if (mixin && typeof mixin !== 'function') throw Error(`Unknown mixin type "${typeof mixin}" - expected "function"`)
+
+  assertDefaultLevelFound(level, customLevels, useOnlyCustomLevels)
+  const levels = mappings(customLevels, useOnlyCustomLevels)
+
+  Object.assign(instance, {
+    levels,
+    [useOnlyCustomLevelsSym]: useOnlyCustomLevels,
+    [streamSym]: stream,
+    [timeSym]: time,
+    [timeSliceIndexSym]: timeSliceIndex,
+    [stringifySym]: stringify,
+    [stringifiersSym]: stringifiers,
+    [endSym]: end,
+    [formatOptsSym]: formatOpts,
+    [messageKeySym]: messageKey,
+    [nestedKeySym]: nestedKey,
+    [serializersSym]: serializers,
+    [mixinSym]: mixin,
+    [chindingsSym]: chindings,
+    [formattersSym]: allFormatters,
+    [hooksSym]: hooks,
+    silent: noop
+  })
+
+  Object.setPrototypeOf(instance, proto())
+
+  genLsCache(instance)
+
+  instance[setLevelSym](level)
+
+  return instance
+}
+
+function labelsFormatter (label, number) {
+  return { level: label }
+}
+
+function levelNameFormatter (name) {
+  return function (label, number) {
+    return { [name]: number }
+  }
+}
+
+function levelNameLabelFormatter (name) {
+  return function (label, number) {
+    return { [name]: label }
+  }
+}
+
+module.exports = pino
+
+module.exports.extreme = (dest = process.stdout.fd) => {
+  process.emitWarning(
+    'The pino.extreme() option is deprecated and will be removed in v7. Use pino.destination({ sync: false }) instead.',
+    { code: 'extreme_deprecation' }
+  )
+  return buildSafeSonicBoom({ dest, minLength: 4096, sync: false })
+}
+
+module.exports.destination = (dest = process.stdout.fd) => {
+  if (typeof dest === 'object') {
+    dest.dest = dest.dest || process.stdout.fd
+    return buildSafeSonicBoom(dest)
+  } else {
+    return buildSafeSonicBoom({ dest, minLength: 0, sync: true })
+  }
+}
+
+module.exports.final = final
+module.exports.levels = mappings()
+module.exports.stdSerializers = serializers
+module.exports.stdTimeFunctions = Object.assign({}, time)
+module.exports.symbols = symbols
+module.exports.version = version
+
+// Enables default and name export with TypeScript and Babel
+module.exports.default = pino
+module.exports.pino = pino
+
+
+/***/ }),
+
+/***/ 5933:
+/***/ ((module) => {
+
+"use strict";
+
+function tryStringify (o) {
+  try { return JSON.stringify(o) } catch(e) { return '"[Circular]"' }
+}
+
+module.exports = format
+
+function format(f, args, opts) {
+  var ss = (opts && opts.stringify) || tryStringify
+  var offset = 1
+  if (typeof f === 'object' && f !== null) {
+    var len = args.length + offset
+    if (len === 1) return f
+    var objects = new Array(len)
+    objects[0] = ss(f)
+    for (var index = 1; index < len; index++) {
+      objects[index] = ss(args[index])
+    }
+    return objects.join(' ')
+  }
+  if (typeof f !== 'string') {
+    return f
+  }
+  var argLen = args.length
+  if (argLen === 0) return f
+  var x = ''
+  var str = ''
+  var a = 1 - offset
+  var lastPos = -1
+  var flen = (f && f.length) || 0
+  for (var i = 0; i < flen;) {
+    if (f.charCodeAt(i) === 37 && i + 1 < flen) {
+      lastPos = lastPos > -1 ? lastPos : 0
+      switch (f.charCodeAt(i + 1)) {
+        case 100: // 'd'
+          if (a >= argLen)
+            break
+          if (lastPos < i)
+            str += f.slice(lastPos, i)
+          if (args[a] == null)  break
+          str += Number(args[a])
+          lastPos = i = i + 2
+          break
+        case 79: // 'O'
+        case 111: // 'o'
+        case 106: // 'j'
+          if (a >= argLen)
+            break
+          if (lastPos < i)
+            str += f.slice(lastPos, i)
+          if (args[a] === undefined) break
+          var type = typeof args[a]
+          if (type === 'string') {
+            str += '\'' + args[a] + '\''
+            lastPos = i + 2
+            i++
+            break
+          }
+          if (type === 'function') {
+            str += args[a].name || '<anonymous>'
+            lastPos = i + 2
+            i++
+            break
+          }
+          str += ss(args[a])
+          lastPos = i + 2
+          i++
+          break
+        case 115: // 's'
+          if (a >= argLen)
+            break
+          if (lastPos < i)
+            str += f.slice(lastPos, i)
+          str += String(args[a])
+          lastPos = i + 2
+          i++
+          break
+        case 37: // '%'
+          if (lastPos < i)
+            str += f.slice(lastPos, i)
+          str += '%'
+          lastPos = i + 2
+          i++
+          break
+      }
+      ++a
+    }
+    ++i
+  }
+  if (lastPos === -1)
+    return f
+  else if (lastPos < flen) {
+    str += f.slice(lastPos)
+  }
+
+  return str
+}
+
+
+/***/ }),
+
+/***/ 3460:
+/***/ ((module, __unused_webpack_exports, __webpack_require__) => {
+
+"use strict";
+
+
+const fs = __webpack_require__(5747)
+const EventEmitter = __webpack_require__(8614)
+const flatstr = __webpack_require__(5298)
+const inherits = __webpack_require__(1669).inherits
+
+const BUSY_WRITE_TIMEOUT = 100
+
+const sleep = __webpack_require__(6950)
+
+// 16 MB - magic number
+// This constant ensures that SonicBoom only needs
+// 32 MB of free memory to run. In case of having 1GB+
+// of data to write, this prevents an out of memory
+// condition.
+const MAX_WRITE = 16 * 1024 * 1024
+
+function openFile (file, sonic) {
+  sonic._opening = true
+  sonic._writing = true
+  sonic._asyncDrainScheduled = false
+
+  // NOTE: 'error' and 'ready' events emitted below only relevant when sonic.sync===false
+  // for sync mode, there is no way to add a listener that will receive these
+
+  function fileOpened (err, fd) {
+    if (err) {
+      sonic._reopening = false
+      sonic._writing = false
+      sonic._opening = false
+
+      if (sonic.sync) {
+        process.nextTick(() => sonic.emit('error', err))
+      } else {
+        sonic.emit('error', err)
+      }
+      return
+    }
+
+    sonic.fd = fd
+    sonic.file = file
+    sonic._reopening = false
+    sonic._opening = false
+    sonic._writing = false
+
+    if (sonic.sync) {
+      process.nextTick(() => sonic.emit('ready'))
+    } else {
+      sonic.emit('ready')
+    }
+
+    if (sonic._reopening) {
+      return
+    }
+
+    // start
+    const len = sonic._buf.length
+    if (len > 0 && len > sonic.minLength && !sonic.destroyed) {
+      actualWrite(sonic)
+    }
+  }
+
+  if (sonic.sync) {
+    try {
+      const fd = fs.openSync(file, 'a')
+      fileOpened(null, fd)
+    } catch (err) {
+      fileOpened(err)
+      throw err
+    }
+  } else {
+    fs.open(file, 'a', fileOpened)
+  }
+}
+
+function SonicBoom (opts) {
+  if (!(this instanceof SonicBoom)) {
+    return new SonicBoom(opts)
+  }
+
+  let { fd, dest, minLength, sync } = opts || {}
+
+  fd = fd || dest
+
+  this._buf = ''
+  this.fd = -1
+  this._writing = false
+  this._writingBuf = ''
+  this._ending = false
+  this._reopening = false
+  this._asyncDrainScheduled = false
+  this.file = null
+  this.destroyed = false
+  this.sync = sync || false
+
+  this.minLength = minLength || 0
+
+  if (typeof fd === 'number') {
+    this.fd = fd
+    process.nextTick(() => this.emit('ready'))
+  } else if (typeof fd === 'string') {
+    openFile(fd, this)
+  } else {
+    throw new Error('SonicBoom supports only file descriptors and files')
+  }
+
+  this.release = (err, n) => {
+    if (err) {
+      if (err.code === 'EAGAIN') {
+        if (this.sync) {
+          // This error code should not happen in sync mode, because it is
+          // not using the underlining operating system asynchronous functions.
+          // However it happens, and so we handle it.
+          // Ref: https://github.com/pinojs/pino/issues/783
+          try {
+            sleep(BUSY_WRITE_TIMEOUT)
+            this.release(undefined, 0)
+          } catch (err) {
+            this.release(err)
+          }
+        } else {
+          // Let's give the destination some time to process the chunk.
+          setTimeout(() => {
+            fs.write(this.fd, this._writingBuf, 'utf8', this.release)
+          }, BUSY_WRITE_TIMEOUT)
+        }
+      } else {
+        // The error maybe recoverable later, so just put data back to this._buf
+        this._buf = this._writingBuf + this._buf
+        this._writingBuf = ''
+        this._writing = false
+
+        this.emit('error', err)
+      }
+      return
+    }
+
+    if (this._writingBuf.length !== n) {
+      this._writingBuf = this._writingBuf.slice(n)
+      if (this.sync) {
+        try {
+          do {
+            n = fs.writeSync(this.fd, this._writingBuf, 'utf8')
+            this._writingBuf = this._writingBuf.slice(n)
+          } while (this._writingBuf.length !== 0)
+        } catch (err) {
+          this.release(err)
+          return
+        }
+      } else {
+        fs.write(this.fd, this._writingBuf, 'utf8', this.release)
+        return
+      }
+    }
+
+    this._writingBuf = ''
+
+    if (this.destroyed) {
+      return
+    }
+
+    const len = this._buf.length
+    if (this._reopening) {
+      this._writing = false
+      this._reopening = false
+      this.reopen()
+    } else if (len > 0 && len > this.minLength) {
+      actualWrite(this)
+    } else if (this._ending) {
+      if (len > 0) {
+        actualWrite(this)
+      } else {
+        this._writing = false
+        actualClose(this)
+      }
+    } else {
+      this._writing = false
+      if (this.sync) {
+        if (!this._asyncDrainScheduled) {
+          this._asyncDrainScheduled = true
+          process.nextTick(emitDrain, this)
+        }
+      } else {
+        this.emit('drain')
+      }
+    }
+  }
+
+  this.on('newListener', function (name) {
+    if (name === 'drain') {
+      this._asyncDrainScheduled = false
+    }
+  })
+}
+
+function emitDrain (sonic) {
+  const hasListeners = sonic.listenerCount('drain') > 0
+  if (!hasListeners) return
+  sonic._asyncDrainScheduled = false
+  sonic.emit('drain')
+}
+
+inherits(SonicBoom, EventEmitter)
+
+SonicBoom.prototype.write = function (data) {
+  if (this.destroyed) {
+    throw new Error('SonicBoom destroyed')
+  }
+
+  this._buf += data
+  const len = this._buf.length
+  if (!this._writing && len > this.minLength) {
+    actualWrite(this)
+  }
+  return len < 16384
+}
+
+SonicBoom.prototype.flush = function () {
+  if (this.destroyed) {
+    throw new Error('SonicBoom destroyed')
+  }
+
+  if (this._writing || this.minLength <= 0) {
+    return
+  }
+
+  actualWrite(this)
+}
+
+SonicBoom.prototype.reopen = function (file) {
+  if (this.destroyed) {
+    throw new Error('SonicBoom destroyed')
+  }
+
+  if (this._opening) {
+    this.once('ready', () => {
+      this.reopen(file)
+    })
+    return
+  }
+
+  if (this._ending) {
+    return
+  }
+
+  if (!this.file) {
+    throw new Error('Unable to reopen a file descriptor, you must pass a file to SonicBoom')
+  }
+
+  this._reopening = true
+
+  if (this._writing) {
+    return
+  }
+
+  const fd = this.fd
+  this.once('ready', () => {
+    if (fd !== this.fd) {
+      fs.close(fd, (err) => {
+        if (err) {
+          return this.emit('error', err)
+        }
+      })
+    }
+  })
+
+  openFile(file || this.file, this)
+}
+
+SonicBoom.prototype.end = function () {
+  if (this.destroyed) {
+    throw new Error('SonicBoom destroyed')
+  }
+
+  if (this._opening) {
+    this.once('ready', () => {
+      this.end()
+    })
+    return
+  }
+
+  if (this._ending) {
+    return
+  }
+
+  this._ending = true
+
+  if (!this._writing && this._buf.length > 0 && this.fd >= 0) {
+    actualWrite(this)
+    return
+  }
+
+  if (this._writing) {
+    return
+  }
+
+  actualClose(this)
+}
+
+SonicBoom.prototype.flushSync = function () {
+  if (this.destroyed) {
+    throw new Error('SonicBoom destroyed')
+  }
+
+  if (this.fd < 0) {
+    throw new Error('sonic boom is not ready yet')
+  }
+
+  while (this._buf.length > 0) {
+    try {
+      fs.writeSync(this.fd, this._buf, 'utf8')
+      this._buf = ''
+    } catch (err) {
+      if (err.code !== 'EAGAIN') {
+        throw err
+      }
+
+      sleep(BUSY_WRITE_TIMEOUT)
+    }
+  }
+}
+
+SonicBoom.prototype.destroy = function () {
+  if (this.destroyed) {
+    return
+  }
+  actualClose(this)
+}
+
+function actualWrite (sonic) {
+  sonic._writing = true
+  let buf = sonic._buf
+  const release = sonic.release
+  if (buf.length > MAX_WRITE) {
+    buf = buf.slice(0, MAX_WRITE)
+    sonic._buf = sonic._buf.slice(MAX_WRITE)
+  } else {
+    sonic._buf = ''
+  }
+  flatstr(buf)
+  sonic._writingBuf = buf
+  if (sonic.sync) {
+    try {
+      const written = fs.writeSync(sonic.fd, buf, 'utf8')
+      release(null, written)
+    } catch (err) {
+      release(err)
+    }
+  } else {
+    fs.write(sonic.fd, buf, 'utf8', release)
+  }
+}
+
+function actualClose (sonic) {
+  if (sonic.fd === -1) {
+    sonic.once('ready', actualClose.bind(null, sonic))
+    return
+  }
+  // TODO write a test to check if we are not leaking fds
+  fs.close(sonic.fd, (err) => {
+    if (err) {
+      sonic.emit('error', err)
+      return
+    }
+
+    if (sonic._ending && !sonic._writing) {
+      sonic.emit('finish')
+    }
+    sonic.emit('close')
+  })
+  sonic.destroyed = true
+  sonic._buf = ''
+}
+
+module.exports = SonicBoom
+
+
+/***/ }),
+
+/***/ 5030:
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -5977,7 +7390,7 @@ exports.getUserAgent = getUserAgent;
 
 /***/ }),
 
-/***/ 940:
+/***/ 2940:
 /***/ ((module) => {
 
 // Returns a wrapper function that returns a wrapped callback
@@ -6017,7 +7430,7 @@ function wrappy (fn, cb) {
 
 /***/ }),
 
-/***/ 877:
+/***/ 2877:
 /***/ ((module) => {
 
 module.exports = eval("require")("encoding");
@@ -6025,15 +7438,31 @@ module.exports = eval("require")("encoding");
 
 /***/ }),
 
-/***/ 357:
+/***/ 1462:
 /***/ ((module) => {
 
-"use strict";
-module.exports = require("assert");;
+module.exports = eval("require")("pino-pretty");
+
 
 /***/ }),
 
-/***/ 614:
+/***/ 8686:
+/***/ ((module) => {
+
+"use strict";
+module.exports = JSON.parse("{\"name\":\"pino\",\"version\":\"6.11.2\",\"description\":\"super fast, all natural json logger\",\"main\":\"pino.js\",\"browser\":\"./browser.js\",\"files\":[\"pino.js\",\"bin.js\",\"browser.js\",\"pretty.js\",\"usage.txt\",\"test\",\"docs\",\"example.js\",\"lib\"],\"scripts\":{\"docs\":\"docsify serve\",\"browser-test\":\"airtap --local 8080 test/browser*test.js\",\"lint\":\"eslint .\",\"test\":\"npm run lint && tap --100 test/*test.js test/*/*test.js\",\"test-ci\":\"npm run lint && tap test/*test.js test/*/*test.js --coverage-report=lcovonly\",\"cov-ui\":\"tap --coverage-report=html test/*test.js test/*/*test.js\",\"bench\":\"node benchmarks/utils/runbench all\",\"bench-basic\":\"node benchmarks/utils/runbench basic\",\"bench-object\":\"node benchmarks/utils/runbench object\",\"bench-deep-object\":\"node benchmarks/utils/runbench deep-object\",\"bench-multi-arg\":\"node benchmarks/utils/runbench multi-arg\",\"bench-longs-tring\":\"node benchmarks/utils/runbench long-string\",\"bench-child\":\"node benchmarks/utils/runbench child\",\"bench-child-child\":\"node benchmarks/utils/runbench child-child\",\"bench-child-creation\":\"node benchmarks/utils/runbench child-creation\",\"bench-formatters\":\"node benchmarks/utils/runbench formatters\",\"update-bench-doc\":\"node benchmarks/utils/generate-benchmark-doc > docs/benchmarks.md\"},\"bin\":{\"pino\":\"./bin.js\"},\"precommit\":\"test\",\"repository\":{\"type\":\"git\",\"url\":\"git+https://github.com/pinojs/pino.git\"},\"keywords\":[\"fast\",\"logger\",\"stream\",\"json\"],\"author\":\"Matteo Collina <hello@matteocollina.com>\",\"contributors\":[\"David Mark Clements <huperekchuno@googlemail.com>\",\"James Sumners <james.sumners@gmail.com>\",\"Thomas Watson Steen <w@tson.dk> (https://twitter.com/wa7son)\"],\"license\":\"MIT\",\"bugs\":{\"url\":\"https://github.com/pinojs/pino/issues\"},\"homepage\":\"http://getpino.io\",\"devDependencies\":{\"airtap\":\"4.0.3\",\"benchmark\":\"^2.1.4\",\"bole\":\"^4.0.0\",\"bunyan\":\"^1.8.14\",\"docsify-cli\":\"^4.4.1\",\"eslint\":\"^7.17.0\",\"eslint-config-standard\":\"^16.0.2\",\"eslint-plugin-import\":\"^2.22.1\",\"eslint-plugin-node\":\"^11.1.0\",\"eslint-plugin-promise\":\"^4.2.1\",\"execa\":\"^5.0.0\",\"fastbench\":\"^1.0.1\",\"flush-write-stream\":\"^2.0.0\",\"import-fresh\":\"^3.2.1\",\"log\":\"^6.0.0\",\"loglevel\":\"^1.6.7\",\"pino-pretty\":\"^4.1.0\",\"pre-commit\":\"^1.2.2\",\"proxyquire\":\"^2.1.3\",\"pump\":\"^3.0.0\",\"semver\":\"^7.0.0\",\"split2\":\"^3.1.1\",\"steed\":\"^1.1.3\",\"strip-ansi\":\"^6.0.0\",\"tap\":\"^14.10.8\",\"tape\":\"^5.0.0\",\"through2\":\"^4.0.0\",\"winston\":\"^3.3.3\"},\"dependencies\":{\"fast-redact\":\"^3.0.0\",\"fast-safe-stringify\":\"^2.0.7\",\"flatstr\":\"^1.0.12\",\"pino-std-serializers\":\"^3.1.0\",\"quick-format-unescaped\":\"4.0.1\",\"sonic-boom\":\"^1.0.2\"}}");
+
+/***/ }),
+
+/***/ 6417:
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("crypto");;
+
+/***/ }),
+
+/***/ 8614:
 /***/ ((module) => {
 
 "use strict";
@@ -6041,7 +7470,7 @@ module.exports = require("events");;
 
 /***/ }),
 
-/***/ 747:
+/***/ 5747:
 /***/ ((module) => {
 
 "use strict";
@@ -6049,7 +7478,7 @@ module.exports = require("fs");;
 
 /***/ }),
 
-/***/ 605:
+/***/ 8605:
 /***/ ((module) => {
 
 "use strict";
@@ -6057,7 +7486,7 @@ module.exports = require("http");;
 
 /***/ }),
 
-/***/ 211:
+/***/ 7211:
 /***/ ((module) => {
 
 "use strict";
@@ -6065,15 +7494,7 @@ module.exports = require("https");;
 
 /***/ }),
 
-/***/ 631:
-/***/ ((module) => {
-
-"use strict";
-module.exports = require("net");;
-
-/***/ }),
-
-/***/ 87:
+/***/ 2087:
 /***/ ((module) => {
 
 "use strict";
@@ -6081,15 +7502,7 @@ module.exports = require("os");;
 
 /***/ }),
 
-/***/ 622:
-/***/ ((module) => {
-
-"use strict";
-module.exports = require("path");;
-
-/***/ }),
-
-/***/ 413:
+/***/ 2413:
 /***/ ((module) => {
 
 "use strict";
@@ -6097,15 +7510,7 @@ module.exports = require("stream");;
 
 /***/ }),
 
-/***/ 16:
-/***/ ((module) => {
-
-"use strict";
-module.exports = require("tls");;
-
-/***/ }),
-
-/***/ 835:
+/***/ 8835:
 /***/ ((module) => {
 
 "use strict";
@@ -6113,7 +7518,7 @@ module.exports = require("url");;
 
 /***/ }),
 
-/***/ 669:
+/***/ 1669:
 /***/ ((module) => {
 
 "use strict";
@@ -6121,7 +7526,15 @@ module.exports = require("util");;
 
 /***/ }),
 
-/***/ 761:
+/***/ 2184:
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("vm");;
+
+/***/ }),
+
+/***/ 8761:
 /***/ ((module) => {
 
 "use strict";
@@ -6167,7 +7580,7 @@ module.exports = require("zlib");;
 /******/ 	// module exports must be returned from runtime so entry inlining is disabled
 /******/ 	// startup
 /******/ 	// Load entry module and return exports
-/******/ 	return __webpack_require__(109);
+/******/ 	return __webpack_require__(3109);
 /******/ })()
 ;
 //# sourceMappingURL=index.js.map
