@@ -1,23 +1,47 @@
 import {APIGatewayProxyEventV2, APIGatewayProxyResultV2} from 'aws-lambda'
 import {CheckSuiteEvent} from '@octokit/webhooks-definitions/schema'
+import * as AWS from 'aws-sdk'
+import SSMParameterStore from 'ssm-parameter-store'
 import * as crypto from 'crypto'
 import {Octokit} from '@octokit/rest'
 import {Endpoints} from '@octokit/types'
 import pino from 'pino'
 
 const log = pino()
+const parameters = new SSMParameterStore(new AWS.SSM(), {
+  githubToken:
+    process.env.GITHUB_TOKEN_KEY_IN_SSM_PARAMETER_STORE ||
+    '/infrastructure/github/pat',
+  webhookSecret:
+    process.env.GITHUB_WEBHOOK_SECRET_KEY_IN_SSM_PARAMETER_STORE ||
+    'infrastructure/github/all-checks-passed/webhook-secret'
+})
 
 type ListChecksForRefCheckRuns = Endpoints['GET /repos/{owner}/{repo}/commits/{ref}/check-runs']['response']['data']['check_runs']
 type CreateCommitStatusResponse = Endpoints['POST /repos/{owner}/{repo}/statuses/{sha}']['response']
 
-function validateGithubWebhookPayload(event: APIGatewayProxyEventV2): void {
-  const secret = process.env.GITHUB_WEBHOOK_SECRET
-  const sig = event.headers['X-Hub-Signature']
-  const githubEvent = event.headers['X-GitHub-Event']
-  const id = event.headers['X-GitHub-Delivery']
+function validateGithubWebhookPayload(
+  event: APIGatewayProxyEventV2,
+  secret: string
+): void {
+  const sig = event.headers['x-hub-signature']
+  const githubEvent = event.headers['x-github-event']
+  const id = event.headers['x-github-delivery']
 
-  if (!secret || !sig || !githubEvent || !id) {
-    throw new Error(`Invalid payload: ${JSON.stringify(event)}`)
+  if (!secret) {
+    throw new Error(`Secret not present`)
+  }
+
+  if (!sig) {
+    throw new Error(`x-hub-signature not present in payload`)
+  }
+
+  if (!id) {
+    throw new Error(`x-github-delivery not present in payload`)
+  }
+
+  if (!githubEvent) {
+    throw new Error(`x-github-event not present in payload`)
   }
 
   if (!event.body || event.body === '') {
@@ -63,13 +87,7 @@ function processEvent(event: CheckSuiteEvent): boolean {
   )
 }
 
-function getOctokit(): InstanceType<typeof Octokit> {
-  const token = process.env.GITHUB_TOKEN
-
-  if (!token) {
-    throw new Error('GITHUB_TOKEN cannot be found in environment variables')
-  }
-
+function getOctokit(token: string): InstanceType<typeof Octokit> {
   return new Octokit({auth: token})
 }
 
@@ -82,7 +100,7 @@ function getOwnerRepoSha(
 } {
   if (!event.repository.owner.name) {
     throw new Error(
-      `Unable to determine owner for repor: ${JSON.stringify(event.repository)}`
+      `Unable to determine owner for repo: ${JSON.stringify(event.repository)}`
     )
   }
   return {
@@ -135,7 +153,8 @@ export async function handler(
   event: APIGatewayProxyEventV2
 ): Promise<APIGatewayProxyResultV2> {
   try {
-    validateGithubWebhookPayload(event)
+    const secret = await parameters.get('webhookSecret')
+    validateGithubWebhookPayload(event, secret)
     const checkSuiteEvent = JSON.parse(event.body as string) as CheckSuiteEvent
 
     if (!processEvent(checkSuiteEvent)) {
@@ -146,7 +165,9 @@ export async function handler(
     }
 
     const {owner, repo, sha} = getOwnerRepoSha(checkSuiteEvent)
-    const octokit = getOctokit()
+    await parameters.preload()
+    const token = await parameters.get('githubToken')
+    const octokit = getOctokit(token)
     const ignoreChecksCSV = process.env.IGNORE_CHECKS || ''
 
     const ignoreChecks = ignoreChecksCSV.split(',')

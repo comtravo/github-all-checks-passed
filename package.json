@@ -30,8 +30,10 @@
     "@octokit/core": "^3.3.0",
     "@octokit/rest": "^18.3.5",
     "@octokit/webhooks": "^8.5.3",
+    "aws-sdk": "^2.864.0",
     "crypto": "^1.0.1",
-    "pino": "^6.11.2"
+    "pino": "^6.11.2",
+    "ssm-parameter-store": "^2.1.2"
   },
   "devDependencies": {
     "@octokit/types": "^6.12.2",
