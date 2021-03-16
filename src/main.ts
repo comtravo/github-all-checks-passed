@@ -98,13 +98,13 @@ function getOwnerRepoSha(
   repo: string
   sha: string
 } {
-  if (!event.repository.owner.name) {
+  if (!event.repository.owner.login) {
     throw new Error(
       `Unable to determine owner for repo: ${JSON.stringify(event.repository)}`
     )
   }
   return {
-    owner: event.repository.owner.name,
+    owner: event.repository.owner.login,
     repo: event.repository.name,
     sha: event.check_suite.head_sha
   }
