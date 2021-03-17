@@ -15,7 +15,6 @@ describe('Handler', () => {
   let awsStub: sinon.SinonStub
   let ssmParameterStoreGetStub: sinon.SinonStub
 
-
   beforeEach(() => {
     process.env.AWS_REGION = 'eu-west-1'
     process.env.AWS_DEFAULT_REGION = 'eu-west-1'
@@ -85,6 +84,18 @@ describe('Handler', () => {
       expect.objectContaining({
         statusCode: 401,
         body: expect.stringMatching(/Signatures did not match/)
+      })
+    )
+  })
+
+  test('should return error when webhook secret is not valid', async () => {
+    ssmParameterStoreGetStub
+    .withArgs('webhookSecret')
+    .returns()
+    await expect(index.handler(event)).resolves.toEqual(
+      expect.objectContaining({
+        statusCode: 401,
+        body: expect.stringMatching(/Secret not present/)
       })
     )
   })

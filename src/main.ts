@@ -28,7 +28,7 @@ function validateGithubWebhookPayload(
   const githubEvent = event.headers['x-github-event']
   const id = event.headers['x-github-delivery']
 
-  if (!secret) {
+  if (!secret || secret === '') {
     throw new Error(`Secret not present`)
   }
 
