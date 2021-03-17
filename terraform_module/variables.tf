@@ -30,7 +30,7 @@ variable "github_webhook_secret" {
 
 variable "ignore_checks" {
   type        = string
-  default     = "SonarCloud Code Analysis"
+  default     = ""
   description = "CSV GitHub checks to ignore"
 }
 
@@ -44,5 +44,23 @@ variable "tags" {
   type        = map
   default     = {}
   description = "Tags for AWS resources"
+}
 
+variable "domain_settings" {
+  type = object({
+    enable          = bool
+    domain_name     = string
+    zone_id         = string
+    certificate_arn = string
+    endpoint_type   = string
+    security_policy = string
+  })
+  default = {
+    "certificate_arn": "",
+    "domain_name": "",
+    "enable": false,
+    "endpoint_type": "",
+    "security_policy": "",
+    "zone_id": ""
+  }
 }
