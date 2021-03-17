@@ -78,12 +78,6 @@ resource "aws_iam_role_policy_attachment" "lambda_vpc_policy" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
 }
 
-data "archive_file" "lambda" {
-  type        = "zip"
-  output_path = "./lambda.zip"
-  source_dir  = "../dist/"
-}
-
 module "lambda" {
   source = "github.com/comtravo/terraform-aws-lambda?ref=5.0.0"
 
