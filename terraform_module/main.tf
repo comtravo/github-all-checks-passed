@@ -10,12 +10,12 @@ data "aws_region" "current" {}
 data "aws_caller_identity" "current" {}
 
 data "aws_ssm_parameter" "github_token_key" {
-  name = var.github_token_key
+  name            = var.github_token_key
   with_decryption = false
 }
 
 data "aws_ssm_parameter" "github_webhook_secret" {
-  name = var.github_webhook_secret
+  name            = var.github_webhook_secret
   with_decryption = false
 }
 

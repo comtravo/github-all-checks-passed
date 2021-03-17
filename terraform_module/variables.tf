@@ -56,11 +56,11 @@ variable "domain_settings" {
     security_policy = string
   })
   default = {
-    "certificate_arn": "",
-    "domain_name": "",
-    "enable": false,
-    "endpoint_type": "",
-    "security_policy": "",
-    "zone_id": ""
+    "certificate_arn" : "",
+    "domain_name" : "",
+    "enable" : false,
+    "endpoint_type" : "",
+    "security_policy" : "",
+    "zone_id" : ""
   }
 }
