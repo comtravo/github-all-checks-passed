@@ -104,7 +104,7 @@ module "lambda" {
 }
 
 module "apig" {
-  source = "github.com/comtravo/terraform-aws-api-gateway-v2?ref=1.1.0"
+  source = "github.com/comtravo/terraform-aws-api-gateway-v2?ref=1.2.0"
 
   name          = var.api_gateway_name
   stage         = var.api_gateway_stage
