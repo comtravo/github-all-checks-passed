@@ -100,11 +100,12 @@ module "lambda" {
 module "apig" {
   source = "github.com/comtravo/terraform-aws-api-gateway-v2?ref=1.2.0"
 
-  name          = var.api_gateway_name
-  stage         = var.api_gateway_stage
-  protocol_type = "HTTP"
-  tags          = var.tags
-  body          = <<EOF
+  name            = var.api_gateway_name
+  stage           = var.api_gateway_stage
+  domain_settings = var.domain_settings
+  protocol_type   = "HTTP"
+  tags            = var.tags
+  body            = <<EOF
 ---
 openapi: "3.0.1"
 x-amazon-apigateway-importexport-version: "1.0"
