@@ -109,9 +109,10 @@ describe('Handler', () => {
     )
   })
 
-  test('should handle the webhook event gracepullt when action is not completed', async () => {
-
-    await expect(index.handler(apiGatewayEventActionNotComplete)).resolves.toEqual(
+  test('should handle the webhook event gracefully when action is not completed', async () => {
+    await expect(
+      index.handler(apiGatewayEventActionNotComplete)
+    ).resolves.toEqual(
       expect.objectContaining({
         statusCode: 201,
         body: expect.stringMatching(/Ignoring event:/)
