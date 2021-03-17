@@ -3,9 +3,10 @@ import {CheckSuiteEvent} from '@octokit/webhooks-definitions/schema'
 import * as AWS from 'aws-sdk'
 import SSMParameterStore from 'ssm-parameter-store'
 import * as crypto from 'crypto'
-import {Octokit} from '@octokit/rest'
-import {Endpoints} from '@octokit/types'
 import pino from 'pino'
+
+import * as octokitLib from '@octokit/rest'
+import {Endpoints} from '@octokit/types'
 
 const log = pino()
 const parameters = new SSMParameterStore(new AWS.SSM(), {
@@ -87,8 +88,10 @@ function processEvent(event: CheckSuiteEvent): boolean {
   )
 }
 
-function getOctokit(token: string): InstanceType<typeof Octokit> {
-  return new Octokit({auth: token})
+export function getOctokit(
+  token: string
+): InstanceType<typeof octokitLib.Octokit> {
+  return new octokitLib.Octokit({auth: token})
 }
 
 function getOwnerRepoSha(
@@ -136,7 +139,7 @@ async function setCommitStatusForSha(
   repo: string,
   sha: string,
   state: 'success' | 'failure' | 'error' | 'pending',
-  octokit: InstanceType<typeof Octokit>
+  octokit: InstanceType<typeof octokitLib.Octokit>
 ): Promise<CreateCommitStatusResponse> {
   const statusName = 'all-checks-passed'
 
