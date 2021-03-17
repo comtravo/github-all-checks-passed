@@ -9,6 +9,7 @@ import {cloneDeep} from 'lodash'
 import * as index from '../src/main'
 
 import * as apiGatewayEvent from './fixtures/api_gateway_event.json'
+import * as apiGatewayEventActionNotComplete from './fixtures/api_gateway_event_action_not_complete.json'
 
 describe('Handler', () => {
   let sandbox: sinon.SinonSandbox
@@ -89,13 +90,31 @@ describe('Handler', () => {
   })
 
   test('should return error when webhook secret is not valid', async () => {
-    ssmParameterStoreGetStub
-    .withArgs('webhookSecret')
-    .returns()
-    await expect(index.handler(event)).resolves.toEqual(
+    ssmParameterStoreGetStub.withArgs('webhookSecret').returns()
+    await expect(index.handler(apiGatewayEvent)).resolves.toEqual(
       expect.objectContaining({
         statusCode: 401,
         body: expect.stringMatching(/Secret not present/)
+      })
+    )
+  })
+
+  test('should return error when webhook secret is an empty string', async () => {
+    ssmParameterStoreGetStub.withArgs('webhookSecret').returns('')
+    await expect(index.handler(apiGatewayEvent)).resolves.toEqual(
+      expect.objectContaining({
+        statusCode: 401,
+        body: expect.stringMatching(/Secret not present/)
+      })
+    )
+  })
+
+  test('should handle the webhook event gracepullt when action is not completed', async () => {
+
+    await expect(index.handler(apiGatewayEventActionNotComplete)).resolves.toEqual(
+      expect.objectContaining({
+        statusCode: 201,
+        body: expect.stringMatching(/Ignoring event:/)
       })
     )
   })
