@@ -6,4 +6,7 @@ tf-docs:
 tf-fmt:
 	@docker run --rm -v $(PWD):/opt/ct -w /opt/ct hashicorp/terraform:0.13.5 fmt -recursive
 
-all: tf-fmt tf-docs
+package:
+	@zip -r terraform_module/lambda.zip dist/
+
+all: tf-fmt tf-docs package
