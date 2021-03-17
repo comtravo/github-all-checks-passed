@@ -1,8 +1,8 @@
 {
-  "name": "typescript-action",
-  "version": "0.0.0",
+  "name": "github-all-checks-passed",
+  "version": "1.0.0",
   "private": true,
-  "description": "TypeScript template action",
+  "description": "An AWS APIG and lambda that sets a status when all other chekcs in GitHub are complete",
   "main": "lib/main.js",
   "scripts": {
     "build": "tsc",
@@ -15,7 +15,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/actions/typescript-action.git"
+    "url": "git+https://github.com/comtravo/all-checks-passed-action.git"
   },
   "keywords": [
     "actions",
