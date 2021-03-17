@@ -81,7 +81,7 @@ resource "aws_iam_role_policy_attachment" "lambda_vpc_policy" {
 module "lambda" {
   source = "github.com/comtravo/terraform-aws-lambda?ref=5.0.0"
 
-  file_name     = "lambda.zip"
+  file_name     = "${path.module}/lambda.zip"
   function_name = var.api_gateway_name
   handler       = "index.handler"
   role          = aws_iam_role.this.arn
