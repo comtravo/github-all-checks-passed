@@ -6,7 +6,7 @@ If you have required checks in GitHub for merging and If you insist on branches 
 
 It is currently (March 2021) not possible to set all the important checks that you want to pass before merging a PR if those checks do not run all the time, there is no way you can merge that PR unless you are an admin on GitHub.
 
-Imagine you have a GitHub Action that is triggered whenever some path in the repo changes. If you set this check as required and there is a PR that does not invoke, this workflow, the PR cannot be merged.
+Imagine you have a GitHub Action that is triggered whenever some path in the repo changes. If you set this check as required and there is a PR that does not invoke this workflow, the PR cannot be merged.
 
 This project aims to fix this by checking if all checks that were invoked, pass. If they all pass, this project creates a `success` status. If any of the checks fail, this project sets `failure` status.
 
@@ -16,7 +16,7 @@ This project aims to fix this by checking if all checks that were invoked, pass.
 
 ## How do I deploy this project?
 
-This project comes with a [companiton terraform module](./terraform_module/). This module can be used to deploy this project or you could use this as a reference to deploy it however you want to.
+This project comes with a [companion terraform module](./terraform_module/). This module can be used to deploy this project or you could use this as a reference to deploy it however you want to.
 
 ## How do I integrate it with GitHub
 
