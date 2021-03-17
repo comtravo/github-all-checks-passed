@@ -16,8 +16,8 @@ import * as listCheckRunsForRefResponse from './fixtures/list_check_runs_for_ref
 describe('Handler', () => {
   let sandbox: sinon.SinonSandbox
   let ssmParameterStoreGetStub: sinon.SinonStub
-  let octokitStub: sinon.SinonStub
   let createCommitStatusStub: sinon.SinonStub
+  let octokitStub: sinon.SinonStub
 
   beforeEach(() => {
     process.env.AWS_REGION = 'eu-west-1'
@@ -26,12 +26,13 @@ describe('Handler', () => {
 
     sandbox.stub(AWS, 'SSM')
 
+    createCommitStatusStub = sandbox.stub()
     octokitStub = sandbox.stub(octokit, 'Octokit').returns({
       checks: {
         listForRef: () => listCheckRunsForRefResponse
       },
       repos: {
-        createCommitStatus: () => sandbox.stub()
+        createCommitStatus: createCommitStatusStub
       }
     })
 
@@ -45,9 +46,10 @@ describe('Handler', () => {
 
   afterEach(() => {
     sandbox.restore()
+    delete process.env.IGNORE_CHECKS
   })
 
-  test.only('should return error when x-hub-signature is not present', async () => {
+  test('should return error when x-hub-signature is not present', async () => {
     const event = cloneDeep(apiGatewayEvent)
     // @ts-ignore
     delete event.headers['x-hub-signature']
@@ -148,14 +150,89 @@ describe('Handler', () => {
     )
   })
 
-  test.only('should handle the webhook event gracefully when check suite is success nor neutral', async () => {
+  test('should handle the webhook event gracefully when some checks have failed', async () => {
     await expect(
       index.handler(apiGatewayEventCheckSuiteCompletedEvent)
     ).resolves.toEqual(
       expect.objectContaining({
         statusCode: 201,
-        body: expect.stringMatching(/Ignoring event:/)
+        body: expect.stringMatching(/Some or all checks failed/)
       })
     )
+
+    expect(createCommitStatusStub.callCount).toEqual(1)
+    expect(
+      createCommitStatusStub.calledOnceWith({
+        owner: 'comtravo',
+        repo: 'ct-backend',
+        sha: 'aae3c1283d8b21ccd0a04a9ad0b384b77fa9bc7e',
+        state: 'failure',
+        context: 'all-checks-passed'
+      })
+    ).toEqual(true)
+  })
+
+  test('should handle the webhook event gracefully when checks have passed excluding ignored checks', async () => {
+    process.env.IGNORE_CHECKS =
+      'SonarCloud Code Analysis,SOME other test_ignore'
+    await expect(
+      index.handler(apiGatewayEventCheckSuiteCompletedEvent)
+    ).resolves.toEqual(
+      expect.objectContaining({
+        statusCode: 201,
+        body: expect.stringMatching(/Event handled successfully/)
+      })
+    )
+
+    expect(createCommitStatusStub.callCount).toEqual(1)
+    expect(
+      createCommitStatusStub.calledOnceWith({
+        owner: 'comtravo',
+        repo: 'ct-backend',
+        sha: 'aae3c1283d8b21ccd0a04a9ad0b384b77fa9bc7e',
+        state: 'success',
+        context: 'all-checks-passed'
+      })
+    ).toEqual(true)
+  })
+
+  test('should handle the webhook event gracefully when some checks are pending excluding ignored checks', async () => {
+    process.env.IGNORE_CHECKS =
+      'SonarCloud Code Analysis,SOME other test_ignore'
+
+    const listCheckRunsForRefChecksPendingResponse = cloneDeep(
+      listCheckRunsForRefResponse
+    )
+    listCheckRunsForRefChecksPendingResponse.data.check_runs[1].status =
+      'in_progress'
+
+    octokitStub.returns({
+      checks: {
+        listForRef: () => listCheckRunsForRefChecksPendingResponse
+      },
+      repos: {
+        createCommitStatus: createCommitStatusStub
+      }
+    })
+
+    await expect(
+      index.handler(apiGatewayEventCheckSuiteCompletedEvent)
+    ).resolves.toEqual(
+      expect.objectContaining({
+        statusCode: 201,
+        body: expect.stringMatching(/Waiting for other checks to complete/)
+      })
+    )
+
+    expect(createCommitStatusStub.callCount).toEqual(1)
+    expect(
+      createCommitStatusStub.calledOnceWith({
+        owner: 'comtravo',
+        repo: 'ct-backend',
+        sha: 'aae3c1283d8b21ccd0a04a9ad0b384b77fa9bc7e',
+        state: 'pending',
+        context: 'all-checks-passed'
+      })
+    ).toEqual(true)
   })
 })
