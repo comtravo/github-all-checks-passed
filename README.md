@@ -1,105 +1,24 @@
-<p align="center">
-  <a href="https://github.com/actions/typescript-action/actions"><img alt="typescript-action status" src="https://github.com/actions/typescript-action/workflows/build-test/badge.svg"></a>
-</p>
+# All Checks Passed GitHub API Gateway Webhook
 
-# Create a JavaScript Action using TypeScript
+## What is this project about
 
-Use this template to bootstrap the creation of a TypeScript action.:rocket:
+If you have required checks in GitHub for merging and If you insist on branches to be up to date before merging, and if some checks run based on what has changed in the PR, this project might be something for you.
 
-This template includes compilation support, tests, a validation workflow, publishing, and versioning guidance.  
+It is currently (March 2021) not possible to set all the important checks that you want to pass before merging a PR if those checks do not run all the time, there is no way you can merge that PR unless you are an admin on GitHub.
 
-If you are new, there's also a simpler introduction.  See the [Hello World JavaScript Action](https://github.com/actions/hello-world-javascript-action)
+Imagine you have a GitHub Action that is triggered whenever some path in the repo changes. If you set this check as required and there is a PR that does not invoke this workflow, the PR cannot be merged.
 
-## Create an action from this template
+This project aims to fix this by checking if all checks that were invoked, pass. If they all pass, this project creates a `success` status. If any of the checks fail, this project sets `failure` status.
 
-Click the `Use this Template` and provide the new repo details for your action
+## Why not use GitHub Actions(GHA) to achieve this project
 
-## Code in Main
+`check_run` and `check_suite` events in GHA come with some restrictions. Firstly, they are only run on the `master` branch and not on PRs. Secondly, [a GHA cannot be triggered when another GHA finishes to prevent recusrive behavior](https://docs.github.com/en/actions/reference/events-that-trigger-workflows#check_suite).
 
-> First, you'll need to have a reasonably modern version of `node` handy. This won't work with versions older than 9, for instance.
+## How do I deploy this project?
 
-Install the dependencies  
-```bash
-$ npm install
-```
+This project comes with a [companion terraform module](./terraform_module/). This module can be used to deploy this project or you could use this as a reference to deploy it however you want to.
 
-Build the typescript and package it for distribution
-```bash
-$ npm run build && npm run package
-```
+## How do I integrate it with GitHub
 
-Run the tests :heavy_check_mark:  
-```bash
-$ npm test
-
- PASS  ./index.test.js
-  ✓ throws invalid number (3ms)
-  ✓ wait 500 ms (504ms)
-  ✓ test runs (95ms)
-
-...
-```
-
-## Change action.yml
-
-The action.yml contains defines the inputs and output for your action.
-
-Update the action.yml with your name, description, inputs and outputs for your action.
-
-See the [documentation](https://help.github.com/en/articles/metadata-syntax-for-github-actions)
-
-## Change the Code
-
-Most toolkit and CI/CD operations involve async operations so the action is run in an async function.
-
-```javascript
-import * as core from '@actions/core';
-...
-
-async function run() {
-  try { 
-      ...
-  } 
-  catch (error) {
-    core.setFailed(error.message);
-  }
-}
-
-run()
-```
-
-See the [toolkit documentation](https://github.com/actions/toolkit/blob/master/README.md#packages) for the various packages.
-
-## Publish to a distribution branch
-
-Actions are run from GitHub repos so we will checkin the packed dist folder. 
-
-Then run [ncc](https://github.com/zeit/ncc) and push the results:
-```bash
-$ npm run package
-$ git add dist
-$ git commit -a -m "prod dependencies"
-$ git push origin releases/v1
-```
-
-Note: We recommend using the `--license` option for ncc, which will create a license file for all of the production node modules used in your project.
-
-Your action is now published! :rocket: 
-
-See the [versioning documentation](https://github.com/actions/toolkit/blob/master/docs/action-versioning.md)
-
-## Validate
-
-You can now validate the action by referencing `./` in a workflow in your repo (see [test.yml](.github/workflows/test.yml))
-
-```yaml
-uses: ./
-with:
-  milliseconds: 1000
-```
-
-See the [actions tab](https://github.com/actions/typescript-action/actions) for runs of this action! :rocket:
-
-## Usage:
-
-After testing you can [create a v1 tag](https://github.com/actions/toolkit/blob/master/docs/action-versioning.md) to reference the stable and latest V1 action
+Integration is pretty straight forward like any other webhook. Grab the webhook url and the shared secret and setup the webhook as specified in the [documentation](https://docs.github.com/en/developers/webhooks-and-events/creating-webhooks). Just send `check_suite` events and nothing else.
+![img](./img/web_hook_config.png)

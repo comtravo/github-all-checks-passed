@@ -1,8 +1,8 @@
 {
-  "name": "typescript-action",
-  "version": "0.0.0",
+  "name": "github-all-checks-passed",
+  "version": "1.0.0",
   "private": true,
-  "description": "TypeScript template action",
+  "description": "An AWS APIG and lambda that sets a status when all other chekcs in GitHub are complete",
   "main": "lib/main.js",
   "scripts": {
     "build": "tsc",
@@ -11,11 +11,11 @@
     "lint": "eslint src/**/*.ts",
     "package": "ncc build --source-map --license licenses.txt",
     "test": "jest",
-    "all": "npm run build && npm run format && npm run lint && npm run package && npm test"
+    "all": "yarn build && yarn format && yarn lint && yarn package && yarn test"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/actions/typescript-action.git"
+    "url": "git+https://github.com/comtravo/all-checks-passed-action.git"
   },
   "keywords": [
     "actions",
@@ -26,22 +26,36 @@
   "license": "MIT",
   "dependencies": {
     "@actions/core": "^1.2.6",
-    "@actions/github": "^4.0.0"
+    "@actions/github": "^4.0.0",
+    "@octokit/core": "^3.3.0",
+    "@octokit/rest": "^18.3.5",
+    "@octokit/webhooks": "^8.5.3",
+    "aws-sdk": "^2.864.0",
+    "crypto": "^1.0.1",
+    "pino": "^6.11.2",
+    "ssm-parameter-store": "^2.1.2"
   },
   "devDependencies": {
-    "@types/jest": "^26.0.20",
-    "@types/node": "^14.14.34",
-    "@typescript-eslint/parser": "^4.17.0",
-    "@vercel/ncc": "^0.27.0",
     "@octokit/types": "^6.12.2",
-    "eslint": "^7.22.0",
-    "eslint-plugin-github": "^4.1.2",
+    "@types/aws-lambda": "^8.10.72",
+    "@types/jest": "^26.0.20",
+    "@types/lodash": "^4.14.168",
+    "@types/node": "^14.14.9",
+    "@types/pino": "^6.3.6",
+    "@types/sinon": "^9.0.11",
+    "@typescript-eslint/parser": "^4.8.1",
+    "@vercel/ncc": "^0.25.1",
+    "eslint": "^7.17.0",
+    "eslint-plugin-github": "^4.1.1",
     "eslint-plugin-jest": "^24.2.1",
+    "husky": "^5.1.3",
     "jest": "^26.6.3",
     "jest-circus": "^26.6.3",
-    "js-yaml": "^4.0.0",
+    "js-yaml": "^3.14.0",
+    "lodash": "^4.17.21",
     "prettier": "2.2.1",
-    "ts-jest": "^26.5.3",
+    "sinon": "^9.2.4",
+    "ts-jest": "^26.4.4",
     "typescript": "^4.2.3"
   }
 }
