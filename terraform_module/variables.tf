@@ -36,7 +36,6 @@ variable "ignore_checks" {
 
 variable "region" {
   type        = string
-  default     = "eu-west-1"
   description = "AWS region"
 }
 
