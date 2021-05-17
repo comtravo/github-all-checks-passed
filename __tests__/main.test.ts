@@ -12,6 +12,7 @@ import * as apiGatewayEventActionNotComplete from './fixtures/api_gateway_event_
 import * as apiGatewayEventCheckSuiteCancelledEvent from './fixtures/api_gateway_event_check_suite_cancelled.json'
 import * as apiGatewayEventCheckSuiteCompletedEvent from './fixtures/api_gateway_event_complete.json'
 import * as listCheckRunsForRefResponse from './fixtures/list_check_runs_for_ref_complete.json'
+import * as listCheckRunsForRefSkippedResponse from './fixtures/list_check_runs_for_ref_skipped.json'
 
 describe('Handler', () => {
   let sandbox: sinon.SinonSandbox
@@ -175,6 +176,40 @@ describe('Handler', () => {
   test('should handle the webhook event gracefully when checks have passed excluding ignored checks', async () => {
     process.env.IGNORE_CHECKS =
       'SonarCloud Code Analysis,SOME other test_ignore'
+    await expect(
+      index.handler(apiGatewayEventCheckSuiteCompletedEvent)
+    ).resolves.toEqual(
+      expect.objectContaining({
+        statusCode: 201,
+        body: expect.stringMatching(/Event handled successfully/)
+      })
+    )
+
+    expect(createCommitStatusStub.callCount).toEqual(1)
+    expect(
+      createCommitStatusStub.calledOnceWith({
+        owner: 'comtravo',
+        repo: 'ct-backend',
+        sha: 'aae3c1283d8b21ccd0a04a9ad0b384b77fa9bc7e',
+        state: 'success',
+        context: 'all-checks-passed'
+      })
+    ).toEqual(true)
+  })
+
+  test('should handle the webhook event gracefully when some checks have passed and some skipped', async () => {
+    process.env.IGNORE_CHECKS =
+      'SonarCloud Code Analysis,SOME other test_ignore'
+
+    octokitStub.returns({
+      checks: {
+        listForRef: () => listCheckRunsForRefSkippedResponse
+      },
+      repos: {
+        createCommitStatus: createCommitStatusStub
+      }
+    })
+
     await expect(
       index.handler(apiGatewayEventCheckSuiteCompletedEvent)
     ).resolves.toEqual(
