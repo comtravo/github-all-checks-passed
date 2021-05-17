@@ -130,7 +130,7 @@ function findFailedChecks(
     check =>
       !ignoreChecks.includes(check.name) &&
       check.status === 'completed' &&
-      check.conclusion !== 'success'
+      !['success', 'skipped'].includes(check.conclusion)
   )
 }
 
