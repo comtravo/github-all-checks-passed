@@ -15,6 +15,7 @@ import * as listCheckSuitesForRefResponse from './fixtures/list_check_runs_for_r
 import * as listCheckSuitesForRefSkippedResponse from './fixtures/list_check_runs_for_ref_skipped.json'
 import * as listCheckSuitesForRefInProgressResponse from './fixtures/list_check_runs_for_ref_in_progress.json'
 import * as listCheckSuitesForRefFailedResponse from './fixtures/list_check_runs_for_ref_failed.json'
+import * as listCheckSuitesForRefAllChecksIgnoredResponse from './fixtures/list_check_runs_for_ref_all_check_suites_ignored.json'
 
 describe('Handler', () => {
   let sandbox: sinon.SinonSandbox
@@ -212,6 +213,37 @@ describe('Handler', () => {
     octokitStub.returns({
       checks: {
         listSuitesForRef: () => listCheckSuitesForRefSkippedResponse
+      },
+      repos: {
+        createCommitStatus: createCommitStatusStub
+      }
+    })
+
+    await expect(
+      index.handler(apiGatewayEventCheckSuiteCompletedEvent)
+    ).resolves.toEqual(
+      expect.objectContaining({
+        statusCode: 201,
+        body: expect.stringMatching(/Event handled successfully/)
+      })
+    )
+
+    expect(createCommitStatusStub.callCount).toEqual(1)
+    expect(
+      createCommitStatusStub.calledOnceWith({
+        owner: 'comtravo',
+        repo: 'ct-backend',
+        sha: 'aae3c1283d8b21ccd0a04a9ad0b384b77fa9bc7e',
+        state: 'success',
+        context: 'all-checks-passed'
+      })
+    ).toEqual(true)
+  })
+
+  test('should handle the webhook event gracefully when all check suites have been ignored', async () => {
+    octokitStub.returns({
+      checks: {
+        listSuitesForRef: () => listCheckSuitesForRefAllChecksIgnoredResponse
       },
       repos: {
         createCommitStatus: createCommitStatusStub
