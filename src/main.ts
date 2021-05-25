@@ -120,7 +120,7 @@ function findPendingCheckSuites(
   return allCheckSuites.filter(
     checkSuite =>
       !ignoreChecks.includes(checkSuite.app.name) &&
-      ['queued', 'in_progress'].includes(checkSuite.status)
+      checkSuite.status !== 'completed'
   )
 }
 
