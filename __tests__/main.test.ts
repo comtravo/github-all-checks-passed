@@ -11,11 +11,8 @@ import * as apiGatewayEvent from './fixtures/api_gateway_event.json'
 import * as apiGatewayEventActionNotComplete from './fixtures/api_gateway_event_action_not_complete.json'
 import * as apiGatewayEventCheckSuiteCancelledEvent from './fixtures/api_gateway_event_check_suite_cancelled.json'
 import * as apiGatewayEventCheckSuiteCompletedEvent from './fixtures/api_gateway_event_complete.json'
-import * as listCheckSuitesForRefResponse from './fixtures/list_check_runs_for_ref_complete.json'
-import * as listCheckSuitesForRefSkippedResponse from './fixtures/list_check_runs_for_ref_skipped.json'
-import * as listCheckSuitesForRefInProgressResponse from './fixtures/list_check_runs_for_ref_in_progress.json'
-import * as listCheckSuitesForRefFailedResponse from './fixtures/list_check_runs_for_ref_failed.json'
-import * as listCheckSuitesForRefAllChecksIgnoredResponse from './fixtures/list_check_runs_for_ref_all_check_suites_ignored.json'
+import * as listCheckRunsForRefResponse from './fixtures/list_check_runs_for_ref_complete.json'
+import * as listCheckRunsForRefSkippedResponse from './fixtures/list_check_runs_for_ref_skipped.json'
 
 describe('Handler', () => {
   let sandbox: sinon.SinonSandbox
@@ -26,8 +23,6 @@ describe('Handler', () => {
   beforeEach(() => {
     process.env.AWS_REGION = 'eu-west-1'
     process.env.AWS_DEFAULT_REGION = 'eu-west-1'
-    process.env.IGNORE_CHECKS =
-      "SonarCloud,Comtravo Jenkins App,Comtravo's New Jenkins,Dependabot"
     sandbox = sinon.createSandbox()
 
     sandbox.stub(AWS, 'SSM')
@@ -35,7 +30,7 @@ describe('Handler', () => {
     createCommitStatusStub = sandbox.stub()
     octokitStub = sandbox.stub(octokit, 'Octokit').returns({
       checks: {
-        listSuitesForRef: () => listCheckSuitesForRefResponse
+        listForRef: () => listCheckRunsForRefResponse
       },
       repos: {
         createCommitStatus: createCommitStatusStub
@@ -157,15 +152,6 @@ describe('Handler', () => {
   })
 
   test('should handle the webhook event gracefully when some checks have failed', async () => {
-    octokitStub.returns({
-      checks: {
-        listSuitesForRef: () => listCheckSuitesForRefFailedResponse
-      },
-      repos: {
-        createCommitStatus: createCommitStatusStub
-      }
-    })
-
     await expect(
       index.handler(apiGatewayEventCheckSuiteCompletedEvent)
     ).resolves.toEqual(
@@ -188,6 +174,8 @@ describe('Handler', () => {
   })
 
   test('should handle the webhook event gracefully when checks have passed excluding ignored checks', async () => {
+    process.env.IGNORE_CHECKS =
+      'SonarCloud Code Analysis,SOME other test_ignore'
     await expect(
       index.handler(apiGatewayEventCheckSuiteCompletedEvent)
     ).resolves.toEqual(
@@ -210,9 +198,12 @@ describe('Handler', () => {
   })
 
   test('should handle the webhook event gracefully when some checks have passed and some skipped', async () => {
+    process.env.IGNORE_CHECKS =
+      'SonarCloud Code Analysis,SOME other test_ignore'
+
     octokitStub.returns({
       checks: {
-        listSuitesForRef: () => listCheckSuitesForRefSkippedResponse
+        listForRef: () => listCheckRunsForRefSkippedResponse
       },
       repos: {
         createCommitStatus: createCommitStatusStub
@@ -240,41 +231,19 @@ describe('Handler', () => {
     ).toEqual(true)
   })
 
-  test('should handle the webhook event gracefully when all check suites have been ignored', async () => {
-    octokitStub.returns({
-      checks: {
-        listSuitesForRef: () => listCheckSuitesForRefAllChecksIgnoredResponse
-      },
-      repos: {
-        createCommitStatus: createCommitStatusStub
-      }
-    })
+  test('should handle the webhook event gracefully when some checks are pending excluding ignored checks', async () => {
+    process.env.IGNORE_CHECKS =
+      'SonarCloud Code Analysis,SOME other test_ignore'
 
-    await expect(
-      index.handler(apiGatewayEventCheckSuiteCompletedEvent)
-    ).resolves.toEqual(
-      expect.objectContaining({
-        statusCode: 201,
-        body: expect.stringMatching(/Event handled successfully/)
-      })
+    const listCheckRunsForRefChecksPendingResponse = cloneDeep(
+      listCheckRunsForRefResponse
     )
+    listCheckRunsForRefChecksPendingResponse.data.check_runs[1].status =
+      'in_progress'
 
-    expect(createCommitStatusStub.callCount).toEqual(1)
-    expect(
-      createCommitStatusStub.calledOnceWith({
-        owner: 'comtravo',
-        repo: 'ct-backend',
-        sha: 'aae3c1283d8b21ccd0a04a9ad0b384b77fa9bc7e',
-        state: 'success',
-        context: 'all-checks-passed'
-      })
-    ).toEqual(true)
-  })
-
-  test('should handle the webhook event gracefully when some checks are in_progress excluding ignored checks', async () => {
     octokitStub.returns({
       checks: {
-        listSuitesForRef: () => listCheckSuitesForRefInProgressResponse
+        listForRef: () => listCheckRunsForRefChecksPendingResponse
       },
       repos: {
         createCommitStatus: createCommitStatusStub
