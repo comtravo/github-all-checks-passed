@@ -18,7 +18,7 @@ const parameters = new SSMParameterStore(new AWS.SSM(), {
     'infrastructure/github/all-checks-passed/webhook-secret'
 })
 
-type ListCheckSuitesForRefCheckSuites = Endpoints['GET /repos/{owner}/{repo}/commits/{ref}/check-suites']['response']['data']['check_suites']
+type ListChecksForRefCheckRuns = Endpoints['GET /repos/{owner}/{repo}/commits/{ref}/check-runs']['response']['data']['check_runs']
 type CreateCommitStatusResponse = Endpoints['POST /repos/{owner}/{repo}/statuses/{sha}']['response']
 
 function validateGithubWebhookPayload(
@@ -113,26 +113,24 @@ function getOwnerRepoSha(
   }
 }
 
-function findPendingCheckSuites(
-  allCheckSuites: ListCheckSuitesForRefCheckSuites,
+function findPendingChecks(
+  allChecks: ListChecksForRefCheckRuns,
   ignoreChecks: string[]
-): ListCheckSuitesForRefCheckSuites {
-  return allCheckSuites.filter(
-    checkSuite =>
-      !ignoreChecks.includes(checkSuite.app.name) &&
-      checkSuite.status !== 'completed'
+): ListChecksForRefCheckRuns {
+  return allChecks.filter(
+    check => !ignoreChecks.includes(check.name) && check.status !== 'completed'
   )
 }
 
-function findFailedCheckSuites(
-  allCheckSuites: ListCheckSuitesForRefCheckSuites,
+function findFailedChecks(
+  allChecks: ListChecksForRefCheckRuns,
   ignoreChecks: string[]
-): ListCheckSuitesForRefCheckSuites {
-  return allCheckSuites.filter(
-    checkSuite =>
-      !ignoreChecks.includes(checkSuite.app.name) &&
-      checkSuite.status === 'completed' &&
-      !['success', 'skipped'].includes(checkSuite.conclusion)
+): ListChecksForRefCheckRuns {
+  return allChecks.filter(
+    check =>
+      !ignoreChecks.includes(check.name) &&
+      check.status === 'completed' &&
+      !['success', 'skipped'].includes(check.conclusion)
   )
 }
 
@@ -177,29 +175,28 @@ export async function handler(
 
     const ignoreChecks = ignoreChecksCSV.split(',')
 
-    const allChecksResponse = await octokit.checks.listSuitesForRef({
+    const allChecksResponse = await octokit.checks.listForRef({
       owner,
       repo,
       ref: sha
     })
 
-    const pendingCheckSuites = findPendingCheckSuites(
-      allChecksResponse.data.check_suites,
+    const pendingChecks = findPendingChecks(
+      allChecksResponse.data.check_runs,
       ignoreChecks
     )
 
-    if (pendingCheckSuites.length !== 0) {
-      log.info(pendingCheckSuites)
+    if (pendingChecks.length !== 0) {
       await setCommitStatusForSha(owner, repo, sha, 'pending', octokit)
       return apiGatewayResponse(201, 'Waiting for other checks to complete')
     }
 
-    const failedCheckSuites = findFailedCheckSuites(
-      allChecksResponse.data.check_suites,
+    const failedChecks = findFailedChecks(
+      allChecksResponse.data.check_runs,
       ignoreChecks
     )
 
-    if (failedCheckSuites.length !== 0) {
+    if (failedChecks.length !== 0) {
       await setCommitStatusForSha(owner, repo, sha, 'failure', octokit)
       return apiGatewayResponse(201, 'Some or all checks failed')
     }
