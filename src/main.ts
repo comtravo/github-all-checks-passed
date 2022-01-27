@@ -82,6 +82,8 @@ function apiGatewayResponse(
 
 function processEvent(event: CheckSuiteEvent): boolean {
   return (
+    event.check_suite.pull_requests.length > 0 &&
+    event.check_suite.pull_requests[0].base.ref === 'master' &&
     event.action === 'completed' &&
     event.check_suite.conclusion !== null &&
     ['success', 'neutral'].includes(event.check_suite.conclusion)
@@ -156,6 +158,7 @@ export async function handler(
   event: APIGatewayProxyEventV2
 ): Promise<APIGatewayProxyResultV2> {
   try {
+    log.info(event)
     const secret = await parameters.get('webhookSecret')
     validateGithubWebhookPayload(event, secret)
     const checkSuiteEvent = JSON.parse(event.body as string) as CheckSuiteEvent
